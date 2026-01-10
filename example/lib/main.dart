@@ -7,6 +7,7 @@ import 'screens/log_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/site_details_screen.dart';
 import 'services/settings_service.dart';
+import 'services/scanning_service.dart';
 import 'models/scanner_activity.dart';
 import 'models/site_details.dart';
 
@@ -54,6 +55,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   final _dsdFlutterPlugin = DsdFlutter();
   final _settingsService = SettingsService();
+  late final ScanningService _scanningService;
   final List<String> _logLines = [];
   final List<CallEvent> _recentCalls = [];
   final ScrollController _logScrollController = ScrollController();
@@ -70,6 +72,12 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    _scanningService = ScanningService(
+      _dsdFlutterPlugin,
+      _settingsService,
+      _start,
+      _stop,
+    );
     _listenToOutput();
     _listenToCallEvents();
     _listenToSiteEvents();
@@ -83,6 +91,7 @@ class _MainScreenState extends State<MainScreen> {
     _siteEventSubscription?.cancel();
     _callTimeoutTimer?.cancel();
     _logScrollController.dispose();
+    _scanningService.dispose();
     super.dispose();
   }
 
@@ -221,6 +230,7 @@ class _MainScreenState extends State<MainScreen> {
         return SettingsScreen(
           settings: _settingsService,
           dsdPlugin: _dsdFlutterPlugin,
+          scanningService: _scanningService,
           isRunning: _isRunning,
           onStart: _start,
           onStop: _stop,

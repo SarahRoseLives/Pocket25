@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import '../services/settings_service.dart';
+import '../services/scanning_service.dart';
 import 'manual_configuration_screen.dart';
+import 'import_settings_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   final SettingsService settings;
   final DsdFlutter dsdPlugin;
+  final ScanningService scanningService;
   final bool isRunning;
   final VoidCallback onStart;
   final VoidCallback onStop;
@@ -15,6 +18,7 @@ class SettingsScreen extends StatelessWidget {
     super.key,
     required this.settings,
     required this.dsdPlugin,
+    required this.scanningService,
     required this.isRunning,
     required this.onStart,
     required this.onStop,
@@ -59,14 +63,27 @@ class SettingsScreen extends StatelessWidget {
             _buildMenuTile(
               context,
               title: 'Import Settings',
-              subtitle: 'Import from Radio Reference (Coming Soon)',
+              subtitle: 'Import from Radio Reference and manage systems',
               icon: Icons.cloud_download,
               iconColor: Colors.purple[300]!,
               onTap: () {
-                // TODO: Navigate to import screen
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Radio Reference import coming soon!'),
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ImportSettingsScreen(
+                      onSiteSelected: (siteId, siteName) async {
+                        // Start scanning the selected site
+                        await scanningService.startScanning(siteId, siteName);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Scanning $siteName...'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      },
+                    ),
                   ),
                 );
               },

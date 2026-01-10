@@ -31,6 +31,24 @@ dependencies:
   
   # URL launcher for Play Store links
   url_launcher: ^6.2.0
+  
+  # HTTP client for API requests
+  http: ^1.2.0
+  
+  # XML parsing for SOAP responses
+  xml: ^6.5.0
+  
+  # Path provider for file storage
+  path_provider: ^2.1.0
+  
+  # Shared preferences for credential storage
+  shared_preferences: ^2.2.0
+  
+  # Geolocator for user location
+  geolocator: ^10.1.0
+  
+  # SQLite database
+  sqflite: ^2.3.0
 
 dev_dependencies:
   integration_test:
