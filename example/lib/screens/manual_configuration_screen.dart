@@ -106,7 +106,7 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
         final port = int.parse(_remotePortController.text);
         widget.settings.updateRemoteHost(host);
         widget.settings.updateRemotePort(port);
-        widget.onStatusUpdate('Connecting to \$host:\$port...');
+        widget.onStatusUpdate('Connecting to $host:$port...');
       }
       
       await widget.dsdPlugin.connect(
@@ -128,11 +128,11 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
         );
       }
     } catch (e) {
-      widget.onStatusUpdate('Configuration error: \$e');
+      widget.onStatusUpdate('Configuration error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: \$e'),
+            content: Text('Error: $e'),
             backgroundColor: Colors.red,
           ),
         );
