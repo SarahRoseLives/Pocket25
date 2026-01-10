@@ -1,0 +1,409 @@
+name: macos-ci
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - ".*"
+      - ".github/*.yml"
+      - ".github/*.yaml"
+      - ".github/**/*.yml"
+      - ".github/**/*.yaml"
+      - "**/*.md"
+
+jobs:
+  build-portable-dmg:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.1
+
+      - name: Compute dependency SHAs (for cache key)
+        id: dep-shas
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "mbe_sha=$(git ls-remote https://github.com/arancormonk/mbelib-neo HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "codec2_sha=$(git ls-remote https://github.com/arancormonk/codec2 HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "rtlsdr_sha=$(git ls-remote https://github.com/arancormonk/rtl-sdr HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare dependency environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "DEPS_PREFIX=${GITHUB_WORKSPACE}/.deps" >> "$GITHUB_ENV"
+          # Homebrew locations (arm64=/opt/homebrew, x86_64=/usr/local)
+          HB_PREFIX=$(brew --prefix)
+          echo "HB_PREFIX=$HB_PREFIX" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${GITHUB_WORKSPACE}/.deps/lib/pkgconfig:${GITHUB_WORKSPACE}/.deps/lib64/pkgconfig:${HB_PREFIX}/lib/pkgconfig:/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/.deps:${HB_PREFIX}:/usr/local:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=${GITHUB_WORKSPACE}/.deps/lib:${GITHUB_WORKSPACE}/.deps/lib64:${DYLD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Restore dependency cache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: deps-${{ runner.os }}-${{ steps.dep-shas.outputs.mbe_sha }}-${{ steps.dep-shas.outputs.codec2_sha }}-${{ steps.dep-shas.outputs.rtlsdr_sha }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+
+      - name: Install base toolchain + libs (Homebrew)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # Many deps we build from source (cached) to align with Linux/Windows flows
+          brew install cmake ninja pkg-config ccache \
+            libsndfile pulseaudio fftw libusb ncurses
+          # Prefer Homebrew packages when available
+          brew install codec2 rtl-sdr || true
+          brew --version
+          cmake --version
+          pkg-config --version
+
+      - name: Prepare ccache environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "CCACHE_DIR=${GITHUB_WORKSPACE}/.ccache" >> "$GITHUB_ENV"
+          echo "CC=ccache clang" >> "$GITHUB_ENV"
+          echo "CXX=ccache clang++" >> "$GITHUB_ENV"
+          echo "CCACHE_BASEDIR=${GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+          echo "CCACHE_NOHASHDIR=true" >> "$GITHUB_ENV"
+          echo "CCACHE_SLOPPINESS=time_macros" >> "$GITHUB_ENV"
+          mkdir -p "${GITHUB_WORKSPACE}/.ccache"
+
+      - name: Restore ccache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: Initialize ccache
+        shell: bash
+        run: |
+          ccache --version
+          ccache --zero-stats
+          ccache --set-config=max_size=500M
+          ccache --set-config=compression=true
+
+      - name: Build and install mbelib-neo (required, cached)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.mbe_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/libmbe-neo.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/libmbe-neo.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^mbe_sha=$want_sha$" "$mf"; then
+              echo "Using cached mbelib-neo in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached mbelib-neo does not match desired SHA; rebuilding"
+          fi
+          git clone --depth 1 https://github.com/arancormonk/mbelib-neo /tmp/mbelib-neo
+          git -C /tmp/mbelib-neo fetch --depth 1 origin "$want_sha"
+          git -C /tmp/mbelib-neo checkout "$want_sha"
+          cmake -S /tmp/mbelib-neo -B /tmp/mbelib-neo/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build /tmp/mbelib-neo/build -j
+          cmake --install /tmp/mbelib-neo/build
+
+      - name: Ensure codec2 (cached fallback if not found)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.codec2_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/codec2.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/codec2.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^codec2_sha=$want_sha$" "$mf"; then
+              echo "Using cached codec2 in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached codec2 does not match desired SHA; rebuilding"
+          else
+            if pkg-config --exists codec2; then
+              echo "Using system codec2"
+              exit 0
+            fi
+          fi
+          git clone --depth 1 https://github.com/arancormonk/codec2 /tmp/codec2
+          git -C /tmp/codec2 fetch --depth 1 origin "$want_sha"
+          git -C /tmp/codec2 checkout "$want_sha"
+          cmake -S /tmp/codec2 -B /tmp/codec2/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build /tmp/codec2/build -j
+          cmake --install /tmp/codec2/build
+
+      - name: Ensure RTL-SDR (cached fallback if not found)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.rtlsdr_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/librtlsdr.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/librtlsdr.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^rtlsdr_sha=$want_sha$" "$mf"; then
+              echo "Using cached rtl-sdr in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached rtl-sdr does not match desired SHA; rebuilding"
+          else
+            if pkg-config --exists librtlsdr; then
+              echo "Using system rtl-sdr"
+              exit 0
+            fi
+          fi
+          git clone --depth 1 https://github.com/arancormonk/rtl-sdr /tmp/rtl-sdr
+          git -C /tmp/rtl-sdr fetch --depth 1 origin "$want_sha"
+          git -C /tmp/rtl-sdr checkout "$want_sha"
+          cmake -S /tmp/rtl-sdr -B /tmp/rtl-sdr/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DDETACH_KERNEL_DRIVER=ON \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build /tmp/rtl-sdr/build -j
+          cmake --install /tmp/rtl-sdr/build
+
+      - name: Update deps manifest
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$DEPS_PREFIX"
+          mf="$DEPS_PREFIX/.manifest"
+          : > "$mf"
+          echo "mbe_sha=${{ steps.dep-shas.outputs.mbe_sha }}" >> "$mf"
+          echo "codec2_sha=${{ steps.dep-shas.outputs.codec2_sha }}" >> "$mf"
+          echo "rtlsdr_sha=${{ steps.dep-shas.outputs.rtlsdr_sha }}" >> "$mf"
+          echo "updated=$(date -u +%FT%TZ)" >> "$mf"
+
+      - name: Show dependency versions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pkg-config --modversion codec2 || true
+          pkg-config --modversion librtlsdr || true
+          pkg-config --modversion libpulse || true
+          pkg-config --modversion sndfile || true
+
+      - name: Configure (Release preset)
+        shell: bash
+        run: |
+          cmake --preset dev-release -G Ninja \
+            -DDSD_ENABLE_LTO=OFF -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DBUILD_TESTING=OFF \
+            -DCURSES_LIBRARY="$HB_PREFIX/opt/ncurses/lib/libncursesw.dylib" \
+            -DCURSES_INCLUDE_PATH="$HB_PREFIX/opt/ncurses/include"
+
+      - name: Build
+        shell: bash
+        run: |
+          cmake --build --preset dev-release -j
+
+      - name: Smoke test - show CLI help
+        shell: bash
+        run: |
+          ./build/dev-release/apps/dsd-cli/dsd-neo -h || true
+
+      - name: Stage portable tree
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          EXE="build/dev-release/apps/dsd-cli/dsd-neo"
+          test -f "$EXE"
+          STAGE="dist/dsd-neo-macos"
+          mkdir -p "$STAGE/bin" "$STAGE/lib"
+          cp -f "$EXE" "$STAGE/bin/"
+
+          # Copy docs/launchers
+          cp -f packaging/macos/README-macos.txt "$STAGE/" || true
+          cp -f packaging/macos/dsd-neo.sh "$STAGE/" || true
+          chmod +x "$STAGE/dsd-neo.sh" || true
+          # Bundle license/notice files
+          DOCDIR="$STAGE/share/doc/dsd-neo"
+          mkdir -p "$DOCDIR/licenses"
+          cp -f LICENSE COPYRIGHT THIRD_PARTY.md "$DOCDIR/"
+          cp -f src/third_party/ezpwd/lesser.txt "$DOCDIR/licenses/ezpwd-LGPL-2.1-or-later.txt"
+          cp -f src/third_party/pffft/COPYING "$DOCDIR/licenses/pffft-FFTPACK.txt"
+          for f in LICENSE COPYRIGHT THIRD_PARTY.md licenses/ezpwd-LGPL-2.1-or-later.txt licenses/pffft-FFTPACK.txt; do
+            if [ ! -f "$DOCDIR/$f" ]; then
+              echo "ERROR: missing required license file $f in $DOCDIR" >&2
+              exit 1
+            fi
+          done
+
+          # Helper: collect dylib deps of a file and copy non-system libs into $STAGE/lib
+          collect_deps() {
+            local file="$1"
+            local libs lib base src
+            libs=$(otool -L "$file" | tail -n +2 | awk '{print $1}')
+            for lib in $libs; do
+              # Skip system libraries
+              case "$lib" in
+                /usr/lib/*|/System/*) continue;;
+              esac
+              base=$(basename "$lib")
+              # Prefer copied version if we already staged it
+              if [ ! -f "$STAGE/lib/$base" ]; then
+                # Resolve potential symlink
+                if [ -f "$lib" ]; then
+                  cp -f "$lib" "$STAGE/lib/$base" 2>/dev/null || true
+                fi
+              fi
+            done
+          }
+
+          # Initial pass for the main binary
+          collect_deps "$STAGE/bin/dsd-neo"
+          # Iterate to capture transitive deps (cap at 5 passes)
+          pass=1
+          while [ $pass -le 5 ]; do
+            changed=0
+            for lib in "$STAGE"/lib/*.dylib; do
+              [ -f "$lib" ] || continue
+              before=$(ls -1 "$STAGE"/lib | wc -l)
+              collect_deps "$lib"
+              after=$(ls -1 "$STAGE"/lib | wc -l)
+              if [ "$after" -gt "$before" ]; then changed=1; fi
+            done
+            [ "$changed" -eq 0 ] && break
+            pass=$((pass+1))
+          done
+
+          # Normalize install names for staged libs and rebasing binary to @rpath
+          add_rpath() {
+            local bin="$1"
+            # Add rpath if not present
+            if ! otool -l "$bin" | grep -A2 LC_RPATH | grep -q '@executable_path/../lib'; then
+              install_name_tool -add_rpath "@executable_path/../lib" "$bin" || true
+            fi
+          }
+
+          add_rpath "$STAGE/bin/dsd-neo"
+
+          # Set id for staged libs and change references in the main binary
+          for lib in "$STAGE"/lib/*.dylib; do
+            [ -f "$lib" ] || continue
+            base=$(basename "$lib")
+            install_name_tool -id "@rpath/$base" "$lib" || true
+          done
+
+          # Rewire binary deps to @rpath when we staged the lib
+          while IFS= read -r line; do
+            dep=$(echo "$line" | awk '{print $1}')
+            case "$dep" in /usr/lib/*|/System/*|$STAGE/*) continue;; esac
+            base=$(basename "$dep")
+            if [ -f "$STAGE/lib/$base" ]; then
+              install_name_tool -change "$dep" "@rpath/$base" "$STAGE/bin/dsd-neo" || true
+            fi
+          done < <(otool -L "$STAGE/bin/dsd-neo" | tail -n +2)
+
+          # Also update references inside each staged lib to other staged libs
+          for tgt in "$STAGE"/lib/*.dylib; do
+            [ -f "$tgt" ] || continue
+            while IFS= read -r line; do
+              dep=$(echo "$line" | awk '{print $1}')
+              case "$dep" in /usr/lib/*|/System/*|$STAGE/*) continue;; esac
+              base=$(basename "$dep")
+              if [ -f "$STAGE/lib/$base" ]; then
+                install_name_tool -change "$dep" "@rpath/$base" "$tgt" || true
+              fi
+            done < <(otool -L "$tgt" | tail -n +2)
+          done
+
+          # Emit manifest for auditing
+          (cd "$STAGE/lib" && ls -1 *.dylib 2>/dev/null | sort -f) > "$STAGE/dylibs-manifest.txt" || true
+
+      - name: Smoke test staged binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="dist/dsd-neo-macos"
+          export DYLD_FALLBACK_LIBRARY_PATH="$STAGE/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+          "$STAGE/bin/dsd-neo" -h || true
+
+      - name: Create DMG
+        id: dmg
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euxo pipefail
+          stage='dist/dsd-neo-macos'
+          arch='arm64'
+          if [ "$REF_TYPE" = 'tag' ] && [ -n "$REF_NAME" ]; then
+            dmg="dist/dsd-neo-macos-${arch}-portable-${REF_NAME}.dmg"
+            artName="dsd-neo-macos-${arch}-portable-${REF_NAME}"
+          else
+            dmg="dist/dsd-neo-macos-${arch}-portable-nightly.dmg"
+            artName="dsd-neo-macos-${arch}-portable-nightly"
+          fi
+          mkdir -p "$(dirname "$dmg")"
+          [ -f "$dmg" ] && rm -f "$dmg"
+          # Include the staged folder as a top-level directory inside the DMG
+          imgroot="dist/.imgroot"
+          rm -rf "$imgroot"
+          mkdir -p "$imgroot"
+          cp -a "$stage" "$imgroot/"
+          # Create a compressed read-only DMG from imgroot (contains dsd-neo-macos/)
+          hdiutil create -fs HFS+ -volname "dsd-neo" -srcfolder "$imgroot" -format UDZO -imagekey zlib-level=9 "$dmg"
+          echo "DMG_PATH=$dmg" >> "$GITHUB_OUTPUT"
+          echo "ART_NAME=$artName" >> "$GITHUB_OUTPUT"
+
+      - name: Verify DMG contents (mount and run help)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          dmg='${{ steps.dmg.outputs.DMG_PATH }}'
+          mnt=$(mktemp -d)
+          hdiutil attach "$dmg" -nobrowse -noverify -mountpoint "$mnt"
+          trap 'hdiutil detach "$mnt" -force || true' EXIT
+          # Run help from inside the mounted DMG
+          export DYLD_FALLBACK_LIBRARY_PATH="$mnt/dsd-neo-macos/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+          "$mnt/dsd-neo-macos/bin/dsd-neo" -h || (echo 'Running help from DMG failed' >&2; exit 1)
+          hdiutil detach "$mnt" -force
+          trap - EXIT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: ${{ steps.dmg.outputs.ART_NAME }}
+          path: ${{ steps.dmg.outputs.DMG_PATH }}
+          retention-days: 7
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          files: ${{ steps.dmg.outputs.DMG_PATH }}
+          name: ${{ steps.dmg.outputs.ART_NAME }}
+          generate_release_notes: true
+
+      - name: Upload nightly asset (overwrite)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: nightly
+          prerelease: true
+          file: ${{ steps.dmg.outputs.DMG_PATH }}
+          asset_name: ${{ steps.dmg.outputs.ART_NAME }}.dmg
+          overwrite: true

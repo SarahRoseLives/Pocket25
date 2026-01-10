@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2025 by arancormonk <180709949+arancormonk@users.noreply.github.com>
+ */
+
+/* Auto-generated during configure. */
+#ifndef MBELIB_NEO_PUBLIC_VERSION_H
+#define MBELIB_NEO_PUBLIC_VERSION_H
+
+#define MBELIB_VERSION "@PROJECT_VERSION@"
+
+#endif /* MBELIB_NEO_PUBLIC_VERSION_H */

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=dsd-neo
+GenericName=Digital Speech Decoder
+Comment=Decode various digital voice protocols from audio and SDR
+Exec=dsd-neo
+Icon=dsd-neo
+Terminal=true
+Categories=Audio;Utility;HamRadio;

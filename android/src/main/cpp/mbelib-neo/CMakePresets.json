@@ -1,0 +1,161 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "dev-debug",
+      "displayName": "Dev Debug",
+      "description": "Debug build with tests and examples enabled",
+      "binaryDir": "${sourceDir}/build/dev-debug",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "MBELIB_BUILD_TESTS": "ON",
+        "MBELIB_BUILD_EXAMPLES": "ON",
+        "NOTONES": "OFF"
+      }
+    },
+    {
+      "name": "dev-release",
+      "displayName": "Dev Release",
+      "description": "Release build with tests and examples enabled",
+      "binaryDir": "${sourceDir}/build/dev-release",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
+        "MBELIB_BUILD_TESTS": "ON",
+        "MBELIB_BUILD_EXAMPLES": "ON",
+        "MBELIB_ENABLE_SIMD": "ON",
+        "NOTONES": "OFF",
+        "MBELIB_ENABLE_FAST_MATH": "ON",
+        "MBELIB_ENABLE_LTO": "ON"
+      }
+    },
+    {
+      "name": "dev-release-simd",
+      "displayName": "Dev Release (SIMD)",
+      "description": "Release build with SIMD enabled",
+      "binaryDir": "${sourceDir}/build/dev-release-simd",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
+        "MBELIB_BUILD_TESTS": "ON",
+        "MBELIB_BUILD_EXAMPLES": "ON",
+        "MBELIB_ENABLE_SIMD": "ON",
+        "NOTONES": "OFF",
+        "MBELIB_ENABLE_FAST_MATH": "ON",
+        "MBELIB_ENABLE_LTO": "ON"
+      }
+    },
+    {
+      "name": "asan-ubsan-debug",
+      "displayName": "Debug + ASan/UBSan",
+      "description": "Debug build with sanitizers enabled",
+      "binaryDir": "${sourceDir}/build/asan-ubsan-debug",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "MBELIB_BUILD_TESTS": "ON",
+        "MBELIB_BUILD_EXAMPLES": "ON",
+        "MBELIB_ENABLE_ASAN": "ON",
+        "MBELIB_ENABLE_UBSAN": "ON",
+        "NOTONES": "OFF"
+      }
+    },
+    {
+      "name": "notones-debug",
+      "displayName": "Debug (NOTONES)",
+      "description": "Debug build with tone synthesis disabled",
+      "binaryDir": "${sourceDir}/build/notones-debug",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "MBELIB_BUILD_TESTS": "ON",
+        "MBELIB_BUILD_EXAMPLES": "ON",
+        "NOTONES": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dev-debug",
+      "configurePreset": "dev-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "dev-debug-clean",
+      "configurePreset": "dev-debug",
+      "configuration": "Debug",
+      "cleanFirst": true
+    },
+    {
+      "name": "dev-release",
+      "configurePreset": "dev-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "dev-release-simd",
+      "configurePreset": "dev-release-simd",
+      "configuration": "Release"
+    },
+    {
+      "name": "dev-release-clean",
+      "configurePreset": "dev-release",
+      "configuration": "Release",
+      "cleanFirst": true
+    },
+    {
+      "name": "asan-ubsan-debug",
+      "configurePreset": "asan-ubsan-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "asan-ubsan-debug-clean",
+      "configurePreset": "asan-ubsan-debug",
+      "configuration": "Debug",
+      "cleanFirst": true
+    },
+    {
+      "name": "notones-debug",
+      "configurePreset": "notones-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "notones-debug-clean",
+      "configurePreset": "notones-debug",
+      "configuration": "Debug",
+      "cleanFirst": true
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "dev-debug",
+      "configurePreset": "dev-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "dev-release",
+      "configurePreset": "dev-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "dev-release-simd",
+      "configurePreset": "dev-release-simd",
+      "configuration": "Release"
+    },
+    {
+      "name": "asan-ubsan-debug",
+      "configurePreset": "asan-ubsan-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "notones-debug",
+      "configurePreset": "notones-debug",
+      "configuration": "Debug"
+    }
+  ]
+}

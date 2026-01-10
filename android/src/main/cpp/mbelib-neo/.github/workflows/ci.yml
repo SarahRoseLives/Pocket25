@@ -1,0 +1,312 @@
+name: CI
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - ".github/*.yml"
+      - ".github/*.yaml"
+      - ".github/**/*.yml"
+      - ".github/**/*.yaml"
+      - "**/*.md"
+  pull_request:
+    branches: [main, master]
+    paths-ignore:
+      - ".github/*.yml"
+      - ".github/*.yaml"
+      - ".github/**/*.yml"
+      - ".github/**/*.yaml"
+      - "**/*.md"
+
+jobs:
+  build-test:
+    needs: [format-check, clang-tidy, cppcheck]
+    name: ${{ matrix.os }} • preset=${{ matrix.preset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        preset: [dev-debug, dev-release, notones-debug]
+    steps:
+      - uses: actions/checkout@v6.0.1
+      - name: Configure (${{ matrix.preset }})
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build (${{ matrix.preset }})
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+      - name: Test (${{ matrix.preset }})
+        run: ctest --preset ${{ matrix.preset }} -V
+
+  sanitize-linux:
+    needs: [format-check, clang-tidy, cppcheck]
+    name: linux • Debug • sanitizers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+      - name: Configure (asan-ubsan-debug)
+        run: cmake --preset asan-ubsan-debug
+      - name: Build (asan-ubsan-debug)
+        run: cmake --build --preset asan-ubsan-debug --parallel
+      - name: Test (asan-ubsan-debug)
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --preset asan-ubsan-debug -V
+
+  format-check:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Check formatting
+        run: |
+          files=$(git ls-files '*.c' '*.h' ':!:build/**')
+          if [ -z "$files" ]; then echo "No C/C headers to check"; exit 0; fi
+          clang-format --version
+          # Prefer dry-run Werror if supported; fallback to diff
+          if clang-format -n --Werror $files 2>/dev/null; then
+            echo "Formatting OK (clang-format -n --Werror)"
+          else
+            echo "clang-format -n --Werror unsupported or failed; using diff"
+            diff -u <(cat $files) <(clang-format $files) || (echo "Run tools/format.sh" && exit 1)
+          fi
+
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+      - name: Install clang-tidy (latest)
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy ripgrep
+      - name: Configure (dev-debug preset)
+        run: cmake --preset dev-debug
+      - name: Run clang-tidy
+        run: |
+          # Analyze both sources and headers; headers are also checked via header-filter from TUs
+          # Exclude src/external/ (third-party code like kiss_fft)
+          files=$(git ls-files '*.c' '*.h' ':!:build/**' ':!:src/external/**')
+          if [ -z "$files" ]; then echo "No C files to analyze"; exit 0; fi
+          echo "Analyzing: $files"
+          # Run clang-tidy using project config
+          clang-tidy -p build/dev-debug $files 2>&1 | tee clang-tidy.log || true
+          # Fail the job if any analyzer/bugprone diagnostics appear
+          if rg -n "\[(clang-analyzer|bugprone).*\]$" clang-tidy.log; then
+            echo "clang-tidy found analyzer/bugprone issues (treated as errors)." >&2
+            exit 1
+          fi
+          echo "clang-tidy clean for analyzer/bugprone checks."
+
+  cppcheck:
+    name: cppcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6.0.1
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          tools/cppcheck.sh
+
+  update-aur:
+    name: Update AUR package
+    needs: [format-check, clang-tidy, cppcheck, build-test, sanitize-linux]
+    runs-on: ubuntu-latest
+    # Only run on upstream pushes; steps guard on AUR key presence
+    if: github.repository == 'arancormonk/mbelib-neo' && github.event_name != 'pull_request'
+    steps:
+      - name: Check AUR SSH key availability
+        id: aur_key
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "AUR_SSH_PRIVATE_KEY is not set; skipping AUR update steps."
+          else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.aur_key.outputs.has_key == 'true'
+        uses: actions/checkout@v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup SSH for AUR
+        if: steps.aur_key.outputs.has_key == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+
+      - name: Clone AUR package
+        if: steps.aur_key.outputs.has_key == 'true'
+        run: |
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur" git clone ssh://aur@aur.archlinux.org/mbelib-neo-git.git aur-package
+
+      - name: Compute new pkgver
+        id: pkgver
+        if: steps.aur_key.outputs.has_key == 'true'
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          commit_count=$(git rev-list --count HEAD)
+          commit_hash=$(git rev-parse --short=7 HEAD)
+          new_pkgver="r${commit_count}.${commit_hash}"
+          echo "pkgver=$new_pkgver" >> "$GITHUB_OUTPUT"
+          echo "Computed pkgver: $new_pkgver"
+
+      - name: Check if update needed
+        id: check
+        if: steps.aur_key.outputs.has_key == 'true'
+        run: |
+          cd aur-package
+          # Handle PKGBUILDs with or without leading whitespace
+          current_pkgver=$(grep -E '^\s*pkgver=' PKGBUILD | sed 's/.*pkgver=//')
+          echo "Current pkgver: $current_pkgver"
+          echo "New pkgver: ${{ steps.pkgver.outputs.pkgver }}"
+          if [ "$current_pkgver" = "${{ steps.pkgver.outputs.pkgver }}" ]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            echo "No update needed"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+            echo "Update needed"
+          fi
+
+      - name: Update PKGBUILD
+        if: steps.aur_key.outputs.has_key == 'true' && steps.check.outputs.needs_update == 'true'
+        run: |
+          cd aur-package
+          # Handle PKGBUILDs with or without leading whitespace
+          sed -i "s/^\(\s*\)pkgver=.*/\1pkgver=${{ steps.pkgver.outputs.pkgver }}/" PKGBUILD
+          # Reset pkgrel to 1 for new upstream version
+          sed -i "s/^\(\s*\)pkgrel=.*/\1pkgrel=1/" PKGBUILD
+
+      - name: Update .SRCINFO
+        if: steps.aur_key.outputs.has_key == 'true' && steps.check.outputs.needs_update == 'true'
+        run: |
+          cd aur-package
+          # Update pkgver in .SRCINFO (lightweight approach)
+          sed -i "s/^\(\s*\)pkgver = .*/\1pkgver = ${{ steps.pkgver.outputs.pkgver }}/" .SRCINFO
+          # Reset pkgrel to 1
+          sed -i "s/^\(\s*\)pkgrel = .*/\1pkgrel = 1/" .SRCINFO
+          # Update source line version reference if present
+          sed -i "s/mbelib-neo-git-r[0-9]*\.[a-f0-9]*/mbelib-neo-git-${{ steps.pkgver.outputs.pkgver }}/" .SRCINFO
+
+      - name: Commit and push to AUR
+        if: steps.aur_key.outputs.has_key == 'true' && steps.check.outputs.needs_update == 'true'
+        run: |
+          cd aur-package
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to ${{ steps.pkgver.outputs.pkgver }}"
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur" git push origin master
+
+  install-and-consume:
+    needs: [format-check, clang-tidy, cppcheck]
+    name: install + consume (pkg-config/CMake)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6.0.1
+      - name: Ensure pkg-config is available (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config
+      - name: Ensure pkg-config is available (macOS)
+        if: runner.os == 'macOS'
+        run: brew update && brew install pkg-config
+      - name: Configure (dev-release preset)
+        run: cmake --preset dev-release
+      - name: Build (dev-release preset)
+        run: cmake --build --preset dev-release --parallel
+      - name: Install
+        run: cmake --install build/dev-release --prefix "$RUNNER_TEMP/mbe-install"
+      - name: Test pkg-config consumer
+        env:
+          PKG_CONFIG_PATH: ${{ runner.temp }}/mbe-install/lib/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+        run: |
+          cat > consumer.c << 'EOF'
+          #include <stdio.h>
+          #include <mbelib-neo/mbelib.h>
+          int main(void) {
+            char ver[32] = {0};
+            mbe_printVersion(ver);
+            printf("version: %s\n", ver);
+            return ver[0] ? 0 : 1;
+          }
+          EOF
+          cc consumer.c $(pkg-config --cflags --libs libmbe-neo) -Wl,-rpath,${RUNNER_TEMP}/mbe-install/lib -o consumer
+          ./consumer
+      - name: Test CMake package consumer
+        run: |
+          mkdir -p demo && cd demo
+          cat > CMakeLists.txt << 'EOF'
+          cmake_minimum_required(VERSION 3.20)
+          project(consumer C)
+          find_package(mbe-neo CONFIG REQUIRED)
+          add_executable(consumer consumer.c)
+          target_link_libraries(consumer PRIVATE mbe_neo::mbe_shared)
+          EOF
+          cat > consumer.c << 'EOF'
+          #include <stdio.h>
+          #include <mbelib-neo/mbelib.h>
+          int main(void) {
+            char ver[32] = {0};
+            mbe_printVersion(ver);
+            printf("version: %s\n", ver);
+            return ver[0] ? 0 : 1;
+          }
+          EOF
+          cmake -S . -B build -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/mbe-install" -DCMAKE_BUILD_RPATH="$RUNNER_TEMP/mbe-install/lib"
+          cmake --build build --parallel
+          ./build/consumer
+
+  install-and-consume-win:
+    needs: [format-check, clang-tidy, cppcheck]
+    name: install + consume (CMake, Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+      - name: Configure (dev-release preset)
+        run: cmake --preset dev-release
+      - name: Build (dev-release preset)
+        run: cmake --build --preset dev-release --parallel
+      - name: Install
+        run: cmake --install build/dev-release --config Release --prefix "$env:RUNNER_TEMP\\mbe-install"
+      - name: Test CMake package consumer (static link)
+        shell: bash
+        run: |
+          mkdir -p demo && cd demo
+          cat > CMakeLists.txt << 'EOF'
+          cmake_minimum_required(VERSION 3.20)
+          project(consumer C)
+          find_package(mbe-neo CONFIG REQUIRED)
+          add_executable(consumer consumer.c)
+          # Link static to avoid DLL path concerns in CI
+          target_link_libraries(consumer PRIVATE mbe_neo::mbe_static)
+          EOF
+          cat > consumer.c << 'EOF'
+          #include <stdio.h>
+          #include <mbelib-neo/mbelib.h>
+          int main(void) {
+            char ver[32] = {0};
+            mbe_printVersion(ver);
+            printf("version: %s\n", ver);
+            return ver[0] ? 0 : 1;
+          }
+          EOF
+          cmake -S . -B build -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/mbe-install"
+          cmake --build build --config Release --parallel
+          ./build/Release/consumer.exe

@@ -1,0 +1,409 @@
+// 
+// pid		-- Proportional/Integral/Differential controller
+// 
+
+/*
+ * Ezpwd Reed-Solomon -- Reed-Solomon encoder / decoder library
+ * 
+ * Copyright (c) 2022, Dominion Research & Development Corp.
+ *
+ * Ezpwd Reed-Solomon is free software: you can redistribute it and/or modify it under the terms of
+ * the GNU General Public License as published by the Free Software Foundation, either version 3 of
+ * the License, or (at your option) any later version.  See the LICENSE file at the top of the
+ * source tree.  Ezpwd Reed-Solomon is also available under Commercial license.  The Djelic BCH code
+ * under djelic/ and the c++/ezpwd/bch_base wrapper is redistributed under the terms of the GPLv2+,
+ * regardless of the overall licensing terms.
+ * 
+ * Ezpwd Reed-Solomon is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
+ * the GNU General Public License for more details.
+ */
+#ifndef _EZPWD_PID
+#define _EZPWD_PID
+
+#include <sstream>
+#include <chrono>
+#include <optional>
+#include <stdexcept>
+#include <initializer_list>
+
+
+using namespace std::chrono_literals;
+
+namespace ezpwd {
+
+    // 
+    // pid_gains -- Package standard PID gains p, i and d, including setpoint feed-forward f
+    // 
+    //     A divisor is supplied, for fixed-point integer PID loops.
+    // 
+    template <typename T=double>
+    class pid_gains {
+    public:
+	T 			p;	// proportional
+	T 			i;	// integral
+	T 			d;	// differential
+	T 			f;	// feed-forward 
+	T			divisor;
+
+	// 
+	// constructors -- default is unit gain PID controller w/ no setpoint feed-forward
+	// 
+				pid_gains(			// For integer T types, eg.:
+				    T		p_	= 1,	// 100: 10%
+				    T		i_	= 1,	//  10:  1%
+				    T		d_	= 1,	//   1:  0.1%
+				    T		f_	= 0,	// no contribution
+				    T		divisor_= 1 )	// ... if a divisor of 1000 is provided
+				    : p( p_ )
+				    , i( i_ )
+				    , d( d_ )
+				    , f( f_ )
+				    , divisor( divisor_ )
+
+	{
+	    ;
+	}
+				      
+				pid_gains(
+				    std::initializer_list<T> gl )
+				    : pid_gains( gl.size() > 0 ? gl.begin()[0] : T( 1 ),
+						 gl.size() > 1 ? gl.begin()[1] : T( 1 ),
+						 gl.size() > 2 ? gl.begin()[2] : T( 1 ),
+						 gl.size() > 3 ? gl.begin()[3] : T( 0 ),
+						 gl.size() > 4 ? gl.begin()[4] : T( 1 ))
+	{
+	    ;
+	}
+
+	template<typename ITER,
+		 std::enable_if_t<std::is_base_of_v<typename std::iterator_traits<ITER>::iterator_category,
+						    std::random_access_iterator_tag>, bool> = true>
+				pid_gains( ITER beg, ITER end )
+				    : pid_gains( beg + 0 < end ? beg[0] : T( 1 ),
+						 beg + 1 < end ? beg[1] : T( 1 ),
+						 beg + 2 < end ? beg[2] : T( 1 ),
+						 beg + 3 < end ? beg[3] : T( 0 ),
+						 beg + 4 < end ? beg[4] : T( 1 ))
+	{
+	    ;
+	}
+
+	// 
+	// normal/reverse	-- ensure all PID gains are +'ve or -'ve
+	// 
+	//     In a "normal" PID controller, changes to a PID's output value are the inverse of the
+	// changes in its input process value; for example, if the process rate (speed) increases,
+	// the output value (throttle) is decreased.  This occurs when all PID gains are +'ve.
+	// 
+	//     In a "reverse" PID controller, increases to input process value should produce
+	// increases in the output value; all gains should be -'ve.
+	// 
+	void			normal()
+	{
+	    if ( p < 0 ) p = -p;
+	    if ( i < 0 ) i = -i;
+	    if ( d < 0 ) d = -d;
+	    if ( f < 0 ) f = -f;
+	}
+
+	void			reverse()
+	{
+	    if ( p > 0 ) p = -p;
+	    if ( i > 0 ) i = -i;
+	    if ( d > 0 ) d = -d;
+	    if ( f > 0 ) f = -f;
+	}
+
+	void			validate()
+	{
+	    if ( p >= 0 && i >= 0 && d >= 0 && f >= 0 ) return;
+	    if ( p <= 0 && i <= 0 && d <= 0 && f <= 0 ) return;
+	    throw std::logic_error( "pid_gains have inconsistent sign" );
+	}
+
+	// 
+	// normalize -- return the pid_gains of the desired type O, normalized to a divisor of scale (default: 1)
+	// 
+	template <typename O=T>
+	pid_gains<O>		normalize( O scale = 1 )
+	{
+	    return pid_gains<O>( divisor ? O( p * scale / divisor ) : O( 0 ),
+				 divisor ? O( i * scale / divisor ) : O( 0 ),
+				 divisor ? O( d * scale / divisor ) : O( 0 ),
+				 divisor ? O( f * scale / divisor ) : O( 0 ),
+				 scale );
+	}
+
+	std::ostream	       &print(
+				    std::ostream       &lhs )
+	    const
+	{
+	    lhs	<< "PID gains ";
+	    lhs << "P: " << std::setw( 8 ) << std::setprecision( 4 ) << p;
+	    if ( p and divisor != T( 1 ))
+		lhs << " / "	<< std::setw( 8 ) << std::setprecision( 4 ) << divisor;
+	    lhs << ", I: "	<< std::setw( 8 ) << std::setprecision( 4 ) << i;
+	    if ( i and divisor != T( 1 ))
+		lhs << " / "	<< std::setw( 8 ) << std::setprecision( 4 ) << divisor;
+	    lhs << ", D: "	<< std::setw( 8 ) << std::setprecision( 4 ) << d;
+	    if ( d and divisor != T( 1 ))
+		lhs << " / "	<< std::setw( 8 ) << std::setprecision( 4 ) << divisor;
+	    lhs << ", F: "	<< std::setw( 8 ) << std::setprecision( 4 ) << f;
+	    if ( f and divisor != T( 1 ))
+		lhs << " / "	<< std::setw( 8 ) << std::setprecision( 4 ) << divisor;
+	    return lhs;
+	}
+
+    };
+    
+    // 
+    // std::ostream << ezpwd::pid_gains<T>
+    // 
+    //     Output a BCH codec description in standard form eg. BCH( 255, 239,   2 )
+    // 
+    template <typename T>
+    inline
+    std::ostream	       &operator<<(
+				    std::ostream       &lhs,
+				    const ezpwd::pid_gains<T>
+						       &rhs )
+    {
+	return rhs.print( lhs );
+    }
+
+    // 
+    // ezpwd::pid<T,PRECISION,CLOCK> -- PID controller over a specified TYPE of setpoint, process and output
+    //
+    //     Requires C++-17 or newer.
+    // 
+    //     The gains are provided for a period of 1 Hz, so since dt is computed in units of
+    // PRECISION, the time-dependent PID gains (I and D) are scaled by 1/PRECISION (as well as being
+    // scaled by the actual delta-t since the last loop invocation.  Therefore, the PID output is
+    // reasonably robust against changes in frequency, as long as you keep the frequency well above
+    // the Nyquist rate of the process parameters.
+    // 
+    template <typename T=double, typename PRECISION=std::chrono::milliseconds, typename CLOCK=std::chrono::system_clock>
+    class pid {
+    public:
+	typedef pid_gains<T>	pid_gains_t;
+	typedef CLOCK		clock_t;
+	typedef PRECISION	precision_t;
+
+	pid_gains_t		K;
+	T			setpoint;
+	T			process;
+	T			output;		// Raw computed output
+	std::optional<T>	out_lo;
+	std::optional<T>	out_hi;
+
+	T			P;		// Last PID factors computed
+	T			I;
+	T			D;
+
+	T			value;		// Clamped output
+	std::chrono::time_point<CLOCK>
+				start;
+	std::chrono::time_point<CLOCK>
+				now;
+
+	//
+	// Initialize the PID loop for steady output
+	//
+        //     Compute the required Integral to yield the desired initial steady-state output.  We
+        // have no proportion error (P) history, and hence assume a 0 Derivative (K.d) term, so:
+        // 
+        //     output == P * K.p + I * K.i + D * K.d + setpoint * K.f
+        //     output == P * K.p + I * K.i + 0 * K.d
+        //     I * K.i == output - P * K.p - setpoint * K.f
+        // 
+        //          output - P * K.p - setpoint * K.f
+        //     I == ---------------------------------
+        //                       K.i
+	//
+	//     Validates the PID gains provided; must be all +'ve (normal; output moves inversely to
+	// process value) or all -'ve (reverse; output moves linearly with process value)
+	// 
+				pid(
+				    pid_gains<T>	gains_	= { },
+				    T			set_	= { },	// Target setpoint
+				    T			pro_	= { },	// Initial process value
+				    T			out_	= { },	// Initial output value
+				    std::optional<T>	out_lo_	= std::nullopt,
+				    std::optional<T>	out_hi_	= std::nullopt,
+				    std::optional<std::chrono::time_point<CLOCK>>
+				    			now_	= std::nullopt,
+				    bool		rev_	= false )
+				    : K( gains_ )
+				    , setpoint( set_ )
+				    , process( pro_ )
+				    , output( out_ )
+				    , out_lo( out_lo_ )
+				    , out_hi( out_hi_ )
+				    , P( setpoint - process )
+				    , I( K.i ? ( output - P * K.p - setpoint * K.f ) * K.divisor / K.i: T( 0 ))
+				    , D( T( 0 ))
+				    , value( output ) // Assumes initial supplied output is w'in out_... limits
+				    , start( now_.has_value() ? now_.value() : CLOCK::now() )
+				    , now( start )
+	{
+	    if ( rev_ )
+		K.reverse();
+	    K.validate();
+	}
+
+	// 
+	// count -- The number of elapsed time ticks since start
+	// 
+	T			count()
+	    const
+	{
+	    return std::chrono::duration_cast<PRECISION>( now - start ).count();
+	}
+
+	// 
+	// operator () -- compute output value based on a new process value at time_point_t now
+	// 
+	//     Returns the computed output value, clamped to out_{lo,hi}.  Any setpoint changes are
+	// factored out for Derivative computation, to avoid unnecessary instantaneous bumps in
+	// output.
+	// 
+	T			operator()(
+				    T			process_,	// The current process value
+				    std::optional<std::chrono::time_point<CLOCK>>
+							now_	= std::nullopt )
+	{
+	    return (*this)( std::nullopt, process_, now_ );
+	}
+
+	T			operator()(
+				    std::optional<T>	setpoint_,	// Maybe change the setpoint
+				    T			process_,	// The current process value
+				    std::optional<std::chrono::time_point<CLOCK>>
+				    			now_	= std::nullopt )
+	{
+	    // Compute change in setpoint over dt; we'll reduce the rate of change derivative D by
+	    // the rate of change in setpoint, dS, because changing our mind about the setpoint
+	    // shouldn't result in an instantaneous large rate of change in the error over the last
+	    // interval!  Also capture supplied process.
+	    T			dS	{ -setpoint };
+	    if ( setpoint_.has_value() )
+		setpoint		= setpoint_.value();
+	    dS			       += setpoint;
+	    process			= process_;
+
+	    // What is our delta-t since our last computation?  Ignore attempts to go back in time,
+	    // or zero delta-t (no effect on output)
+	    if ( ! now_ )
+		now_			= CLOCK::now();
+	    if ( *now_ <= now )
+	     	return value;
+	    auto		dt	{ std::chrono::duration_cast<PRECISION>( *now_ - now ).count() };
+	    now				= *now_;
+
+	    // Proportional: error between setpoint and process value.  This error is time-independent.
+	    auto		P_u	= setpoint - process;
+	    // Integral: total error under curve over time (net anti-windup).  The Proportional
+	    // error is scaled directly by the time period dt (ticks) / (ticks per second); the
+	    // shorter the dt period, the less the Proportional error accrues to I.
+	    auto		I_u	= I + P_u * dt / PRECISION( 1s ).count();
+	    // Derivative: instantaneous rate of change of error (net dS).  The Proportional error
+	    // is scaled inversely by the timer period dt (ticks per second) / dt (ticks).  The
+	    // shorter the time period dt, the greater the instantaneous rate of change Derivative
+	    // accrues to D.  In other words; if a certain rate of change of error occurs over a
+	    // *shorter* time period, the *greater* D influences the output response.
+	    auto		D_u	= ( P_u - P - dS ) * PRECISION( 1s ).count() / dt;
+	    P				= P_u;				// must remember for D computation over time
+	    D				= D_u;				// not necessary, but useful for monitoring
+
+            // Compute tentative Output value, clamp Output to saturation limits, and perform
+            // Integral anti-windup computation -- only remembering new Integral if output value not
+            // clamped (or if new Integral would reduce Output clamping)!  Output computation takes
+            // place in full K.{p,i,d} precision, and result is scaled by K.divisor.  The impact of
+            // PRECISION has already been factored into K.i * I_u and K.d * D_u; K.p and K.f are
+            // time-independent.
+	    output			= (   K.p * P_u
+					    + K.i * I_u
+					    + K.d * D_u 
+					    + K.f * setpoint ) / K.divisor;
+
+	    if ( out_lo && output <= *out_lo ) {
+		// Clamp output on low end, only remember increasing Integral
+                value			= *out_lo;
+                if ( I_u > I )
+		    I			= I_u;
+            } else if ( out_hi && output >= *out_hi ) {
+		// Clamp output on high end, only remember decreasing Integral
+                value			= *out_hi;
+                if ( I_u > I )
+                    I			= I_u;
+            } else {
+		// No clamping; use output and Integral as-is
+                value			= output;
+		I			= I_u;
+	    }
+
+	    return value;
+	}
+
+	// 
+	// contribution -- Compute the contribution of each of P, I and D and F toward raw output
+	// 
+        //     We must deduce the I contribution, because its value may not have been updated (if
+        // integral anti-windup kicked in).
+	// 
+	pid_gains_t		contribution()
+	    const
+	{
+	    auto		Op	= K.p * P;
+	    auto		Od	= K.d * D;
+	    auto		Of	= K.f * setpoint;
+	    auto		Oi	= output - Op - Od - Of;
+
+	    return pid_gains_t( Op, Oi, Od, Of, output * K.divisor );
+	}
+
+	std::ostream	       &print(
+				    std::ostream       &lhs )
+	{
+	    auto		pct	= contribution().normalize( 100L );
+	    auto		Kn	= K.normalize( 1.0F );
+
+	    lhs
+		// << "now "	<< CLOCK::now().time_since_epoch().count()
+		<< " T+"	<< std::setw( 10 ) << std::setprecision( 6 ) << count() / PRECISION( 1s ).count();
+	    if ( K.p ) lhs
+		<< " P ("	<< std::setw( 4 ) << pct.p << "%): " << std::setw( 8 ) << std::setprecision( 4 ) << Kn.p
+		<< " x"		<< std::setw( 10 ) << std::setprecision( 4 ) << P;
+	    if ( K.i ) lhs
+		<< " + I ("	<< std::setw( 4 ) << pct.i << "%): " << std::setw( 8 ) << std::setprecision( 4 ) << Kn.i
+		<< " x"		<< std::setw( 7 ) << std::setprecision( 4 ) << I;
+	    if ( K.d ) lhs
+		<< " + D ("	<< std::setw( 4 ) << pct.d << "%): " << std::setw( 8 ) << std::setprecision( 4 ) << Kn.d
+		<< " x"		<< std::setw( 7 ) << std::setprecision( 4 ) << D;
+	    if ( K.f ) lhs
+		<< " + F ("	<< std::setw( 4 ) << pct.f << "%): " << std::setw( 8 ) << std::setprecision( 4 ) << Kn.f
+		<< " x"		<< std::setw( 7 ) << std::setprecision( 4 ) << D;
+	    lhs
+		<< " == "	<< std::setw( 7 ) << std::setprecision( 4 ) << value;
+	    return lhs;
+	}
+    }; // class pid
+
+    // 
+    // std::ostream << ezpwd::pid
+    // 
+    //     Output a PID controller detail
+    //
+    template <typename T>
+    inline
+    std::ostream	       &operator<<(
+				    std::ostream       &lhs,
+				    ezpwd::pid<T>      &rhs )
+    {
+	return rhs.print( lhs );
+    }
+
+} // namespace ezpwd
+
+#endif // _EZPWD_PID

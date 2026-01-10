@@ -1,0 +1,737 @@
+name: linux-ci
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - ".*"
+      - ".github/*.yml"
+      - ".github/*.yaml"
+      - ".github/**/*.yml"
+      - ".github/**/*.yaml"
+      - "**/*.md"
+
+  pull_request:
+    branches: [main, master]
+    paths-ignore:
+      - ".*"
+      - ".github/*.yml"
+      - ".github/*.yaml"
+      - ".github/**/*.yml"
+      - ".github/**/*.yaml"
+      - "**/*.md"
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    # Do not run this full Release build on pull_request; keep it for push/dispatch
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.1
+
+      - name: Prepare dependency environment
+        id: prep-env
+        run: |
+          set -euxo pipefail
+          echo "DEPS_PREFIX=${GITHUB_WORKSPACE}/.deps" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${GITHUB_WORKSPACE}/.deps/lib/pkgconfig:${GITHUB_WORKSPACE}/.deps/lib64/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/.deps:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${GITHUB_WORKSPACE}/.deps/lib:${GITHUB_WORKSPACE}/.deps/lib64:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Compute dependency SHAs (for cache key)
+        id: dep-shas
+        run: |
+          set -euxo pipefail
+          echo "mbe_sha=$(git ls-remote https://github.com/arancormonk/mbelib-neo HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "codec2_sha=$(git ls-remote https://github.com/arancormonk/codec2 HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "rtlsdr_sha=$(git ls-remote https://github.com/arancormonk/rtl-sdr HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore dependency cache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: deps-${{ runner.os }}-${{ steps.dep-shas.outputs.mbe_sha }}-${{ steps.dep-shas.outputs.codec2_sha }}-${{ steps.dep-shas.outputs.rtlsdr_sha }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+
+      - name: Install base build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config git ccache \
+            libsndfile1-dev libpulse-dev libncurses-dev \
+            libusb-1.0-0-dev libfftw3-dev libblas-dev liblapack-dev \
+            gfortran
+
+      - name: Prepare ccache environment
+        id: prep-ccache
+        run: |
+          set -euxo pipefail
+          echo "CCACHE_DIR=${GITHUB_WORKSPACE}/.ccache" >> "$GITHUB_ENV"
+          echo "CC=ccache gcc" >> "$GITHUB_ENV"
+          echo "CXX=ccache g++" >> "$GITHUB_ENV"
+          echo "CCACHE_BASEDIR=${GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+          echo "CCACHE_NOHASHDIR=true" >> "$GITHUB_ENV"
+          echo "CCACHE_SLOPPINESS=time_macros" >> "$GITHUB_ENV"
+          mkdir -p "${GITHUB_WORKSPACE}/.ccache"
+
+      - name: Compute tool versions (for ccache key)
+        id: toolver
+        run: |
+          set -euxo pipefail
+          echo "gcc_ver=$(gcc -dumpfullversion -dumpversion || gcc --version | head -n1)" >> "$GITHUB_OUTPUT"
+          echo "cmake_ver=$(cmake --version | head -n1 | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore ccache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.job }}-${{ steps.toolver.outputs.gcc_ver }}-${{ steps.toolver.outputs.cmake_ver }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ github.job }}-${{ steps.toolver.outputs.gcc_ver }}-${{ steps.toolver.outputs.cmake_ver }}-
+            ccache-${{ runner.os }}-${{ github.job }}-
+            ccache-${{ runner.os }}-
+
+      - name: Initialize ccache
+        run: |
+          ccache --version
+          ccache --zero-stats
+          ccache --set-config=max_size=500M
+          ccache --set-config=compression=true
+
+      - name: Install dependencies via APT when available (codec2, rtl-sdr)
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            libcodec2-dev librtlsdr-dev || true
+
+      - name: Build and install mbelib-neo (required, cached)
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.mbe_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/libmbe-neo.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/libmbe-neo.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^mbe_sha=$want_sha$" "$mf"; then
+              echo "Using cached mbelib-neo in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached mbelib-neo does not match desired SHA; rebuilding"
+          fi
+          git clone --depth 1 https://github.com/arancormonk/mbelib-neo /tmp/mbelib-neo
+          git -C /tmp/mbelib-neo fetch --depth 1 origin "$want_sha"
+          git -C /tmp/mbelib-neo checkout "$want_sha"
+          cmake -S /tmp/mbelib-neo -B /tmp/mbelib-neo/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+          cmake --build /tmp/mbelib-neo/build -j
+          cmake --install /tmp/mbelib-neo/build
+
+      - name: Ensure codec2 (cached fallback if not found)
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.codec2_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/codec2.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/codec2.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^codec2_sha=$want_sha$" "$mf"; then
+              echo "Using cached codec2 in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached codec2 does not match desired SHA; rebuilding"
+          else
+            if pkg-config --exists codec2; then
+              echo "Using system codec2"
+              exit 0
+            fi
+          fi
+          git clone --depth 1 https://github.com/arancormonk/codec2 /tmp/codec2
+          git -C /tmp/codec2 fetch --depth 1 origin "$want_sha"
+          git -C /tmp/codec2 checkout "$want_sha"
+          cmake -S /tmp/codec2 -B /tmp/codec2/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+          cmake --build /tmp/codec2/build -j
+          cmake --install /tmp/codec2/build
+
+      - name: Ensure RTL-SDR (cached fallback if pkg-config not found)
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.rtlsdr_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/librtlsdr.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/librtlsdr.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^rtlsdr_sha=$want_sha$" "$mf"; then
+              echo "Using cached rtl-sdr in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached rtl-sdr does not match desired SHA; rebuilding"
+          else
+            if pkg-config --exists librtlsdr; then
+              echo "Using system rtl-sdr"
+              exit 0
+            fi
+          fi
+          git clone --depth 1 https://github.com/arancormonk/rtl-sdr /tmp/rtl-sdr
+          git -C /tmp/rtl-sdr fetch --depth 1 origin "$want_sha"
+          git -C /tmp/rtl-sdr checkout "$want_sha"
+          cmake -S /tmp/rtl-sdr -B /tmp/rtl-sdr/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDETACH_KERNEL_DRIVER=ON -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+          cmake --build /tmp/rtl-sdr/build -j
+          cmake --install /tmp/rtl-sdr/build
+
+      - name: Update deps manifest
+        run: |
+          set -euxo pipefail
+          mkdir -p "$DEPS_PREFIX"
+          mf="$DEPS_PREFIX/.manifest"
+          : > "$mf"
+          echo "mbe_sha=${{ steps.dep-shas.outputs.mbe_sha }}" >> "$mf"
+          echo "codec2_sha=${{ steps.dep-shas.outputs.codec2_sha }}" >> "$mf"
+          echo "rtlsdr_sha=${{ steps.dep-shas.outputs.rtlsdr_sha }}" >> "$mf"
+          echo "updated=$(date -u +%FT%TZ)" >> "$mf"
+
+      - name: Show dependency versions
+        run: |
+          pkg-config --modversion codec2 || true
+          pkg-config --modversion librtlsdr || true
+          ldconfig -p | grep -E 'libsndfile|libpulse|ncursesw' || true
+
+      - name: Configure (Release preset)
+        run: |
+          cmake --preset dev-release
+
+      - name: Build
+        run: |
+          cmake --build --preset dev-release -j
+
+      - name: Smoke test - show CLI help
+        run: |
+          ./build/dev-release/apps/dsd-cli/dsd-neo -h || true
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache -s
+
+  update-nightly-tag:
+    name: Update nightly tag
+    needs: [build-linux]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Move nightly tag to current commit
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          ts=$(date -u +%FT%TZ)
+          if git rev-parse -q --verify refs/tags/nightly >/dev/null; then
+            git tag -fa nightly -m "nightly $ts" HEAD
+          else
+            git tag -a nightly -m "nightly $ts" HEAD
+          fi
+          git push --force origin refs/tags/nightly
+
+  update-aur:
+    name: Update AUR package
+    needs: [build-linux]
+    runs-on: ubuntu-latest
+    # Only run on upstream pushes; steps guard on AUR key presence
+    if: github.repository == 'arancormonk/dsd-neo' && github.event_name != 'pull_request'
+    steps:
+      - name: Check AUR SSH key availability
+        id: aur_key
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "AUR_SSH_PRIVATE_KEY is not set; skipping AUR update steps."
+          else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.aur_key.outputs.has_key == 'true'
+        uses: actions/checkout@v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup SSH for AUR
+        if: steps.aur_key.outputs.has_key == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+
+      - name: Clone AUR package
+        if: steps.aur_key.outputs.has_key == 'true'
+        run: |
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur" git clone ssh://aur@aur.archlinux.org/dsd-neo-git.git aur-package
+
+      - name: Compute new pkgver
+        id: pkgver
+        if: steps.aur_key.outputs.has_key == 'true'
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          commit_count=$(git rev-list --count HEAD)
+          commit_hash=$(git rev-parse --short=7 HEAD)
+          new_pkgver="r${commit_count}.${commit_hash}"
+          echo "pkgver=$new_pkgver" >> "$GITHUB_OUTPUT"
+          echo "Computed pkgver: $new_pkgver"
+
+      - name: Check if update needed
+        id: check
+        if: steps.aur_key.outputs.has_key == 'true'
+        run: |
+          cd aur-package
+          # Handle PKGBUILDs with or without leading whitespace
+          current_pkgver=$(grep -E '^\s*pkgver=' PKGBUILD | sed 's/.*pkgver=//')
+          echo "Current pkgver: $current_pkgver"
+          echo "New pkgver: ${{ steps.pkgver.outputs.pkgver }}"
+          if [ "$current_pkgver" = "${{ steps.pkgver.outputs.pkgver }}" ]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            echo "No update needed"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+            echo "Update needed"
+          fi
+
+      - name: Update PKGBUILD
+        if: steps.aur_key.outputs.has_key == 'true' && steps.check.outputs.needs_update == 'true'
+        run: |
+          cd aur-package
+          # Handle PKGBUILDs with or without leading whitespace
+          sed -i "s/^\(\s*\)pkgver=.*/\1pkgver=${{ steps.pkgver.outputs.pkgver }}/" PKGBUILD
+          # Reset pkgrel to 1 for new upstream version
+          sed -i "s/^\(\s*\)pkgrel=.*/\1pkgrel=1/" PKGBUILD
+
+      - name: Update .SRCINFO
+        if: steps.aur_key.outputs.has_key == 'true' && steps.check.outputs.needs_update == 'true'
+        run: |
+          cd aur-package
+          # Update pkgver in .SRCINFO (lightweight approach)
+          sed -i "s/^\(\s*\)pkgver = .*/\1pkgver = ${{ steps.pkgver.outputs.pkgver }}/" .SRCINFO
+          # Reset pkgrel to 1
+          sed -i "s/^\(\s*\)pkgrel = .*/\1pkgrel = 1/" .SRCINFO
+          # Update source line version reference if present
+          sed -i "s/dsd-neo-git-r[0-9]*\.[a-f0-9]*/dsd-neo-git-${{ steps.pkgver.outputs.pkgver }}/" .SRCINFO
+
+      - name: Commit and push to AUR
+        if: steps.aur_key.outputs.has_key == 'true' && steps.check.outputs.needs_update == 'true'
+        run: |
+          cd aur-package
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to ${{ steps.pkgver.outputs.pkgver }}"
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur" git push origin master
+
+  sanitize-linux:
+    name: Linux • Debug • sanitizers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.1
+
+      - name: Prepare dependency environment
+        run: |
+          set -euxo pipefail
+          echo "DEPS_PREFIX=${GITHUB_WORKSPACE}/.deps" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${GITHUB_WORKSPACE}/.deps/lib/pkgconfig:${GITHUB_WORKSPACE}/.deps/lib64/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/.deps:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${GITHUB_WORKSPACE}/.deps/lib:${GITHUB_WORKSPACE}/.deps/lib64:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Compute dependency SHAs (for cache key)
+        id: dep-shas
+        run: |
+          set -euxo pipefail
+          echo "mbe_sha=$(git ls-remote https://github.com/arancormonk/mbelib-neo HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "codec2_sha=$(git ls-remote https://github.com/arancormonk/codec2 HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "rtlsdr_sha=$(git ls-remote https://github.com/arancormonk/rtl-sdr HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore dependency cache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: deps-${{ runner.os }}-${{ steps.dep-shas.outputs.mbe_sha }}-${{ steps.dep-shas.outputs.codec2_sha }}-${{ steps.dep-shas.outputs.rtlsdr_sha }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+
+      - name: Install base build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config git ccache \
+            libsndfile1-dev libpulse-dev libncurses-dev \
+            libusb-1.0-0-dev libfftw3-dev libblas-dev liblapack-dev \
+            gfortran
+
+      - name: Prepare ccache environment
+        run: |
+          set -euxo pipefail
+          echo "CCACHE_DIR=${GITHUB_WORKSPACE}/.ccache" >> "$GITHUB_ENV"
+          echo "CC=ccache gcc" >> "$GITHUB_ENV"
+          echo "CXX=ccache g++" >> "$GITHUB_ENV"
+          echo "CCACHE_BASEDIR=${GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+          echo "CCACHE_NOHASHDIR=true" >> "$GITHUB_ENV"
+          echo "CCACHE_SLOPPINESS=time_macros" >> "$GITHUB_ENV"
+          mkdir -p "${GITHUB_WORKSPACE}/.ccache"
+
+      - name: Compute tool versions (for ccache key)
+        id: toolver-sanitize
+        run: |
+          set -euxo pipefail
+          echo "gcc_ver=$(gcc -dumpfullversion -dumpversion || gcc --version | head -n1)" >> "$GITHUB_OUTPUT"
+          echo "cmake_ver=$(cmake --version | head -n1 | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore ccache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.job }}-${{ steps.toolver-sanitize.outputs.gcc_ver }}-${{ steps.toolver-sanitize.outputs.cmake_ver }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ github.job }}-${{ steps.toolver-sanitize.outputs.gcc_ver }}-${{ steps.toolver-sanitize.outputs.cmake_ver }}-
+            ccache-${{ runner.os }}-${{ github.job }}-
+            ccache-${{ runner.os }}-
+
+      - name: Initialize ccache
+        run: |
+          ccache --version
+          ccache --zero-stats
+          ccache --set-config=max_size=500M
+          ccache --set-config=compression=true
+
+      - name: Install dependencies via APT when available (codec2, rtl-sdr)
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            libcodec2-dev librtlsdr-dev || true
+
+      - name: Build and install mbelib-neo (required, cached)
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.mbe_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/libmbe-neo.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/libmbe-neo.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^mbe_sha=$want_sha$" "$mf"; then
+              echo "Using cached mbelib-neo in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached mbelib-neo does not match desired SHA; rebuilding"
+          fi
+          git clone --depth 1 https://github.com/arancormonk/mbelib-neo /tmp/mbelib-neo
+          git -C /tmp/mbelib-neo fetch --depth 1 origin "$want_sha"
+          git -C /tmp/mbelib-neo checkout "$want_sha"
+          cmake -S /tmp/mbelib-neo -B /tmp/mbelib-neo/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+          cmake --build /tmp/mbelib-neo/build -j
+          cmake --install /tmp/mbelib-neo/build
+
+      - name: Ensure codec2 (cached fallback if not found)
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.codec2_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/codec2.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/codec2.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^codec2_sha=$want_sha$" "$mf"; then
+              echo "Using cached codec2 in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached codec2 does not match desired SHA; rebuilding"
+          else
+            if pkg-config --exists codec2; then
+              echo "Using system codec2"
+              exit 0
+            fi
+          fi
+          git clone --depth 1 https://github.com/arancormonk/codec2 /tmp/codec2
+          git -C /tmp/codec2 fetch --depth 1 origin "$want_sha"
+          git -C /tmp/codec2 checkout "$want_sha"
+          cmake -S /tmp/codec2 -B /tmp/codec2/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+          cmake --build /tmp/codec2/build -j
+          cmake --install /tmp/codec2/build
+
+      - name: Ensure RTL-SDR (cached fallback if pkg-config not found)
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.rtlsdr_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/librtlsdr.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/librtlsdr.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^rtlsdr_sha=$want_sha$" "$mf"; then
+              echo "Using cached rtl-sdr in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached rtl-sdr does not match desired SHA; rebuilding"
+          else
+            if pkg-config --exists librtlsdr; then
+              echo "Using system rtl-sdr"
+              exit 0
+            fi
+          fi
+          git clone --depth 1 https://github.com/arancormonk/rtl-sdr /tmp/rtl-sdr
+          git -C /tmp/rtl-sdr fetch --depth 1 origin "$want_sha"
+          git -C /tmp/rtl-sdr checkout "$want_sha"
+          cmake -S /tmp/rtl-sdr -B /tmp/rtl-sdr/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDETACH_KERNEL_DRIVER=ON -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+          cmake --build /tmp/rtl-sdr/build -j
+          cmake --install /tmp/rtl-sdr/build
+
+      - name: Update deps manifest
+        run: |
+          set -euxo pipefail
+          mkdir -p "$DEPS_PREFIX"
+          mf="$DEPS_PREFIX/.manifest"
+          : > "$mf"
+          echo "mbe_sha=${{ steps.dep-shas.outputs.mbe_sha }}" >> "$mf"
+          echo "codec2_sha=${{ steps.dep-shas.outputs.codec2_sha }}" >> "$mf"
+          echo "rtlsdr_sha=${{ steps.dep-shas.outputs.rtlsdr_sha }}" >> "$mf"
+          echo "updated=$(date -u +%FT%TZ)" >> "$mf"
+
+      - name: Configure (asan-ubsan-debug)
+        run: cmake --preset asan-ubsan-debug
+
+      - name: Build (asan-ubsan-debug)
+        run: cmake --build --preset asan-ubsan-debug --parallel
+
+      - name: Test (asan-ubsan-debug)
+        run: ctest --preset asan-ubsan-debug -V
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache -s
+
+  format-check:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Check formatting
+        run: |
+          files=$(git ls-files '*.c' '*.cc' '*.cxx' '*.cpp' '*.h' '*.hpp' ':!:build/**')
+          if [ -z "$files" ]; then echo "No C/C++ files to check"; exit 0; fi
+          clang-format --version
+          # Try strict check; fallback to diff if unsupported
+          if clang-format -n --Werror $files 2>/dev/null; then
+            echo "Formatting OK (clang-format -n --Werror)"
+          else
+            echo "clang-format -n --Werror unsupported or failed; using diff"
+            diff -u <(cat $files) <(clang-format $files) || (echo "Formatting issues found. Run clang-format." && exit 1)
+          fi
+
+  cppcheck:
+    name: cppcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          tools/cppcheck.sh
+
+      - name: Upload cppcheck output
+        if: always()
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: cppcheck-report
+          path: .cppcheck.local.out
+          include-hidden-files: true
+          retention-days: 7
+
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+
+      - name: Prepare dependency environment
+        run: |
+          set -euxo pipefail
+          echo "DEPS_PREFIX=${GITHUB_WORKSPACE}/.deps" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${GITHUB_WORKSPACE}/.deps/lib/pkgconfig:${GITHUB_WORKSPACE}/.deps/lib64/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/.deps:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${GITHUB_WORKSPACE}/.deps/lib:${GITHUB_WORKSPACE}/.deps/lib64:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Compute dependency SHAs (for cache key)
+        id: dep-shas
+        run: |
+          set -euxo pipefail
+          echo "mbe_sha=$(git ls-remote https://github.com/arancormonk/mbelib-neo HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "codec2_sha=$(git ls-remote https://github.com/arancormonk/codec2 HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "rtlsdr_sha=$(git ls-remote https://github.com/arancormonk/rtl-sdr HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore dependency cache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: deps-${{ runner.os }}-${{ steps.dep-shas.outputs.mbe_sha }}-${{ steps.dep-shas.outputs.codec2_sha }}-${{ steps.dep-shas.outputs.rtlsdr_sha }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+
+      - name: Inll toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy ripgrep build-essential cmake ninja-build pkg-config git ccache \
+            libsndfile1-dev libpulse-dev libncurses-dev libusb-1.0-0-dev \
+            libfftw3-dev libblas-dev liblapack-dev gfortran
+
+      - name: Prepare ccache environment
+        run: |
+          set -euxo pipefail
+          echo "CCACHE_DIR=${GITHUB_WORKSPACE}/.ccache" >> "$GITHUB_ENV"
+          echo "CC=ccache gcc" >> "$GITHUB_ENV"
+          echo "CXX=ccache g++" >> "$GITHUB_ENV"
+          echo "CCACHE_BASEDIR=${GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+          echo "CCACHE_NOHASHDIR=true" >> "$GITHUB_ENV"
+          echo "CCACHE_SLOPPINESS=time_macros" >> "$GITHUB_ENV"
+          mkdir -p "${GITHUB_WORKSPACE}/.ccache"
+
+      - name: Compute tool versions (for ccache key)
+        id: toolver-tidy
+        run: |
+          set -euxo pipefail
+          echo "gcc_ver=$(gcc -dumpfullversion -dumpversion || gcc --version | head -n1)" >> "$GITHUB_OUTPUT"
+          echo "cmake_ver=$(cmake --version | head -n1 | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore ccache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ github.job }}-${{ steps.toolver-tidy.outputs.gcc_ver }}-${{ steps.toolver-tidy.outputs.cmake_ver }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ github.job }}-${{ steps.toolver-tidy.outputs.gcc_ver }}-${{ steps.toolver-tidy.outputs.cmake_ver }}-
+            ccache-${{ runner.os }}-${{ github.job }}-
+            ccache-${{ runner.os }}-
+
+      - name: Initialize ccache
+        run: |
+          ccache --version
+          ccache --zero-stats
+          ccache --set-config=max_size=500M
+          ccache --set-config=compression=true
+
+      - name: Install dependencies via APT when available (codec2, rtl-sdr)
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            libcodec2-dev librtlsdr-dev || true
+
+      - name: Build and install mbelib-neo (required, cached)
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.mbe_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/libmbe-neo.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/libmbe-neo.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^mbe_sha=$want_sha$" "$mf"; then
+              echo "Using cached mbelib-neo in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached mbelib-neo does not match desired SHA; rebuilding"
+          fi
+          git clone --depth 1 https://github.com/arancormonk/mbelib-neo /tmp/mbelib-neo
+          git -C /tmp/mbelib-neo fetch --depth 1 origin "$want_sha"
+          git -C /tmp/mbelib-neo checkout "$want_sha"
+          cmake -S /tmp/mbelib-neo -B /tmp/mbelib-neo/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+          cmake --build /tmp/mbelib-neo/build -j
+          cmake --install /tmp/mbelib-neo/build
+
+      - name: Ensure codec2 (cached fallback if not found)
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.codec2_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/codec2.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/codec2.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^codec2_sha=$want_sha$" "$mf"; then
+              echo "Using cached codec2 in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached codec2 does not match desired SHA; rebuilding"
+          else
+            if pkg-config --exists codec2; then
+              echo "Using system codec2"
+              exit 0
+            fi
+          fi
+          git clone --depth 1 https://github.com/arancormonk/codec2 /tmp/codec2
+          git -C /tmp/codec2 fetch --depth 1 origin "$want_sha"
+          git -C /tmp/codec2 checkout "$want_sha"
+          cmake -S /tmp/codec2 -B /tmp/codec2/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+          cmake --build /tmp/codec2/build -j
+          cmake --install /tmp/codec2/build
+
+      - name: Ensure RTL-SDR (cached fallback if pkg-config not found)
+        run: |
+          set -euxo pipefail
+          mf="$DEPS_PREFIX/.manifest"
+          want_sha='${{ steps.dep-shas.outputs.rtlsdr_sha }}'
+          pc1="$DEPS_PREFIX/lib/pkgconfig/librtlsdr.pc"
+          pc2="$DEPS_PREFIX/lib64/pkgconfig/librtlsdr.pc"
+          if [ -f "$pc1" ] || [ -f "$pc2" ]; then
+            if [ -f "$mf" ] && grep -q "^rtlsdr_sha=$want_sha$" "$mf"; then
+              echo "Using cached rtl-sdr in $DEPS_PREFIX"
+              exit 0
+            fi
+            echo "Cached rtl-sdr does not match desired SHA; rebuilding"
+          else
+            if pkg-config --exists librtlsdr; then
+              echo "Using system rtl-sdr"
+              exit 0
+            fi
+          fi
+          git clone --depth 1 https://github.com/arancormonk/rtl-sdr /tmp/rtl-sdr
+          git -C /tmp/rtl-sdr fetch --depth 1 origin "$want_sha"
+          git -C /tmp/rtl-sdr checkout "$want_sha"
+          cmake -S /tmp/rtl-sdr -B /tmp/rtl-sdr/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDETACH_KERNEL_DRIVER=ON -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+          cmake --build /tmp/rtl-sdr/build -j
+          cmake --install /tmp/rtl-sdr/build
+
+      - name: Update deps manifest
+        run: |
+          set -euxo pipefail
+          mkdir -p "$DEPS_PREFIX"
+          mf="$DEPS_PREFIX/.manifest"
+          : > "$mf"
+          echo "mbe_sha=${{ steps.dep-shas.outputs.mbe_sha }}" >> "$mf"
+          echo "codec2_sha=${{ steps.dep-shas.outputs.codec2_sha }}" >> "$mf"
+          echo "rtlsdr_sha=${{ steps.dep-shas.outputs.rtlsdr_sha }}" >> "$mf"
+          echo "updated=$(date -u +%FT%TZ)" >> "$mf"
+
+      - name: Configure (dev-debug)
+        run: cmake --preset dev-debug
+
+      - name: Run clang-tidy (curated)
+        run: |
+          tools/clang_tidy.sh
+
+      - name: Upload clang-tidy output
+        if: always()
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: clang-tidy-report
+          path: .clang-tidy.local.out
+          include-hidden-files: true
+          retention-days: 7
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache -s

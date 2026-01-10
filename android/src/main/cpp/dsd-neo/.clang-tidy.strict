@@ -1,0 +1,42 @@
+# Strict mode: broader check set (still excludes known-noisy checks).
+Checks: >
+  -*,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  clang-analyzer-optin.core*,
+  clang-analyzer-optin.portability.UnixAPI,
+  clang-analyzer-optin.performance.Padding,
+  bugprone-*,
+  security-*,
+  cert-*,
+  misc-*,
+  performance-*,
+  readability-*,
+  portability-*,
+  clang-diagnostic-sign-compare,
+  clang-diagnostic-implicit-fallthrough,
+  clang-diagnostic-tautological-pointer-compare,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -readability-function-cognitive-complexity,
+  -readability-function-size,
+  -readability-identifier-length,
+  -readability-identifier-naming,
+  -readability-magic-numbers,
+  -readability-uppercase-literal-suffix,
+  -readability-isolate-declaration,
+  -readability-non-const-parameter,
+  -readability-math-missing-parentheses,
+  -misc-no-recursion,
+  -misc-unused-parameters,
+  -misc-include-cleaner
+WarningsAsErrors: 'clang-analyzer-*,security-*,bugprone-macro-parentheses,bugprone-branch-clone,bugprone-integer-division,bugprone-signed-char-misuse,bugprone-implicit-widening-of-multiplication-result,bugprone-unsafe-functions,bugprone-too-small-loop-variable,bugprone-suspicious-string-compare,bugprone-assignment-in-if-condition,bugprone-exception-escape,bugprone-misplaced-widening-cast,bugprone-multi-level-implicit-pointer-conversion,bugprone-reserved-identifier,bugprone-switch-missing-default-case,bugprone-suspicious-memory-comparison,misc-redundant-expression,cert-str34-c,cert-flp30-c,clang-diagnostic-sign-compare,clang-diagnostic-implicit-fallthrough,clang-diagnostic-tautological-pointer-compare'
+HeaderFilterRegex: '(^|.*/)(include|apps|src/(core|crypto|dsp|fec|io|platform|protocol|runtime|ui))/'
+FormatStyle: none
+CheckOptions:
+  - key: bugprone-branch-clone.MinLines
+    value: '5'
+  - key: bugprone-branch-clone.MinStructuralSimilarity
+    value: '0.9'
+  - key: bugprone-reserved-identifier.AllowedIdentifiers
+    value: '_GNU_SOURCE;_USE_MATH_DEFINES'

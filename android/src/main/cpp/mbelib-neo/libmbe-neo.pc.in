@@ -1,0 +1,15 @@
+# Resolve paths relative to this .pc file's directory (pcfiledir)
+# This makes the package relocatable and respects custom install prefixes
+# used at install time (e.g., `cmake --install --prefix ...`).
+libdir=${pcfiledir}/..
+includedir=${pcfiledir}/../../include
+
+Name: libmbe-neo
+Description: Performance‑enhanced AMBE and IMBE vocoder (mbelib-neo)
+Version: @PROJECT_VERSION@
+URL: https://github.com/arancormonk/mbelib-neo
+License: GPL-2.0-or-later
+
+Libs: -L${libdir} -lmbe-neo
+Libs.private: -lm
+Cflags: -I${includedir}

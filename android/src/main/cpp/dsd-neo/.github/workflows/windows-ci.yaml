@@ -1,0 +1,372 @@
+name: windows-ci
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - ".*"
+      - ".github/*.yml"
+      - ".github/*.yaml"
+      - ".github/**/*.yml"
+      - ".github/**/*.yaml"
+      - "**/*.md"
+
+jobs:
+  build-native-msvc:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      # Use a release-only triplet to avoid building debug variants of vcpkg deps.
+      VCPKG_DEFAULT_TRIPLET: x64-windows-dynamic-release
+      VCPKG_TARGET_TRIPLET: x64-windows-dynamic-release
+      VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}\vcpkg-triplets
+      # Enable vcpkg binary caching on GitHub Actions cache.
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      # Enable sccache GitHub Actions backend.
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.1
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Initialize sccache
+        shell: pwsh
+        run: |
+          & $env:SCCACHE_PATH --version
+          & $env:SCCACHE_PATH --zero-stats
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11.5
+        with:
+          # run-vcpkg v11.5 requires a full 40-char SHA1; update as needed.
+          vcpkgGitCommitId: "b5b449f0bb37fbad60171245eb323e08e892e8d7"
+
+      - name: Install vcpkg dependencies (MSVC)
+        shell: pwsh
+        run: vcpkg install --triplet $env:VCPKG_DEFAULT_TRIPLET --overlay-triplets "$env:GITHUB_WORKSPACE\\vcpkg-triplets" --x-manifest-root "$env:GITHUB_WORKSPACE"
+
+      - name: Configure (MSVC Release)
+        shell: pwsh
+        # Use Ninja generator (override preset) so CMAKE_*_COMPILER_LAUNCHER works with sccache
+        run: cmake --preset win-msvc-release -G Ninja -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      - name: Build (MSVC Release)
+        shell: pwsh
+        run: cmake --build --preset win-msvc-release
+
+      - name: Show sccache stats
+        shell: pwsh
+        run: |
+          & $env:SCCACHE_PATH --show-stats
+
+      - name: Stage native MSVC tree
+        id: stage
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path 'build/win-msvc-release/apps/dsd-cli' -Recurse -Filter 'dsd-neo.exe' |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { throw "Exe not found under build/win-msvc-release/apps/dsd-cli" }
+          $stage = 'dist/dsd-neo-msvc'
+          $binDir = Join-Path $stage 'bin'
+          $docDir = Join-Path $stage 'share/doc/dsd-neo'
+          $licenseDir = Join-Path $docDir 'licenses'
+          New-Item -ItemType Directory -Force -Path $binDir,$docDir,$licenseDir | Out-Null
+          Copy-Item -Force $exe $binDir
+
+          $triplet = $env:VCPKG_TARGET_TRIPLET
+          if (-not $triplet) { $triplet = $env:VCPKG_DEFAULT_TRIPLET }
+          if (-not $triplet) { $triplet = 'x64-windows-dynamic-release' }
+          $vcpkgBin = Join-Path $env:GITHUB_WORKSPACE (Join-Path 'vcpkg_installed' (Join-Path $triplet 'bin'))
+          $searchDirs = @()
+          if (Test-Path $vcpkgBin) { $searchDirs += $vcpkgBin }
+          & 'tools/windows/stage_runtime_dlls.ps1' `
+            -TargetBinary (Join-Path $binDir 'dsd-neo.exe') `
+            -DestinationDir $binDir `
+            -SearchDirs $searchDirs
+
+          Copy-Item -Force LICENSE,COPYRIGHT,THIRD_PARTY.md $docDir -ErrorAction SilentlyContinue
+          Copy-Item -Force 'src/third_party/ezpwd/lesser.txt' (Join-Path $licenseDir 'ezpwd-LGPL-2.1-or-later.txt') -ErrorAction SilentlyContinue
+          Copy-Item -Force 'src/third_party/pffft/COPYING' (Join-Path $licenseDir 'pffft-FFTPACK.txt') -ErrorAction SilentlyContinue
+          $required = @('LICENSE','COPYRIGHT','THIRD_PARTY.md','licenses/ezpwd-LGPL-2.1-or-later.txt','licenses/pffft-FFTPACK.txt')
+          foreach ($f in $required) {
+            $p = Join-Path $docDir $f
+            if (!(Test-Path $p)) { throw "Missing required license file in staged docs: $p" }
+          }
+
+      - name: Smoke test staged binary (MSVC)
+        shell: pwsh
+        run: |
+          $exe = 'dist/dsd-neo-msvc/bin/dsd-neo.exe'
+          if (!(Test-Path $exe)) { throw "Staged exe not found: $exe" }
+          $bin = Split-Path -Parent $exe
+          # Ensure the staged tree is self-contained by avoiding PATH leakage
+          # from the build environment (vcpkg/VS).
+          $env:PATH = "$bin;$env:SystemRoot\\System32;$env:SystemRoot"
+          Write-Host "Running: $exe -h"
+          & $exe -h
+
+      - name: Archive native MSVC ZIP
+        shell: pwsh
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $stage = 'dist/dsd-neo-msvc'
+          if ($env:REF_TYPE -eq 'tag' -and $env:REF_NAME) {
+            $zip = "dist/dsd-neo-msvc-x86_64-native-$($env:REF_NAME).zip"
+            $artName = "dsd-neo-msvc-x86_64-native-$($env:REF_NAME)"
+          } else {
+            $zip = "dist/dsd-neo-msvc-x86_64-native-nightly.zip"
+            $artName = "dsd-neo-msvc-x86_64-native-nightly"
+          }
+          if (Test-Path $zip) { Remove-Item -Force $zip }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip)
+          echo "ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          echo "ART_NAME=$artName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        id: zip
+
+      - name: Verify ZIP contents (extract and run help)
+        shell: pwsh
+        run: |
+          $zip = '${{ steps.zip.outputs.ZIP_PATH }}'
+          if (!(Test-Path $zip)) { throw "ZIP not found: $zip" }
+          $dest = Join-Path $env:RUNNER_TEMP ('dsd-neo-msvc-' + [System.Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $dest)
+          $bin = Join-Path $dest 'bin'
+          $exe = Join-Path $bin 'dsd-neo.exe'
+          if (!(Test-Path $exe)) { throw "Extracted exe not found: $exe" }
+          # Ensure the ZIP is self-contained by avoiding PATH leakage from the
+          # build environment.
+          $env:PATH = "$bin;$env:SystemRoot\\System32;$env:SystemRoot"
+          Write-Host "Running: $exe -h"
+          & $exe -h
+
+      - name: Upload native MSVC artifact
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: ${{ steps.zip.outputs.ART_NAME }}
+          path: ${{ steps.zip.outputs.ZIP_PATH }}
+          retention-days: 7
+
+      - name: Upload native MSVC release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          files: ${{ steps.zip.outputs.ZIP_PATH }}
+
+      - name: Upload native MSVC nightly asset (overwrite)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: nightly
+          prerelease: true
+          file: ${{ steps.zip.outputs.ZIP_PATH }}
+          asset_name: dsd-neo-msvc-x86_64-native-nightly.zip
+          overwrite: true
+
+  build-native-mingw:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      # Use a release-only triplet to avoid building debug variants of vcpkg deps.
+      VCPKG_DEFAULT_TRIPLET: x64-mingw-dynamic-release
+      VCPKG_TARGET_TRIPLET: x64-mingw-dynamic-release
+      # Enable vcpkg binary caching on GitHub Actions cache.
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      # Enable sccache GitHub Actions backend.
+      SCCACHE_GHA_ENABLED: "true"
+      VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}\vcpkg-triplets
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.1
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Initialize sccache
+        shell: pwsh
+        run: |
+          & $env:SCCACHE_PATH --version
+          & $env:SCCACHE_PATH --zero-stats
+
+      - name: Setup MSYS2 (MinGW-w64)
+        uses: msys2/setup-msys2@v2.30.0
+        with:
+          msystem: MINGW64
+          # Avoid full MSYS2 system upgrades in CI.
+          # We've seen intermittent pacman database signature failures in unrelated repos (e.g. clangarm64)
+          # that break the job before we even build. Installing only what we need is more reliable.
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-ncurses
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11.5
+        with:
+          # run-vcpkg v11.5 requires a full 40-char SHA1; update as needed.
+          vcpkgGitCommitId: "b5b449f0bb37fbad60171245eb323e08e892e8d7"
+
+      - name: Install vcpkg dependencies (MinGW)
+        shell: msys2 {0}
+        env:
+          # Ensure the Windows PATH (with vcpkg.exe) is visible in MSYS2.
+          MSYS2_PATH_TYPE: inherit
+        run: |
+          set -euo pipefail
+          VCPKG_EXE="$(cygpath -u "$VCPKG_ROOT")/vcpkg.exe"
+          "$VCPKG_EXE" install --triplet "${VCPKG_DEFAULT_TRIPLET}" --x-manifest-root "$GITHUB_WORKSPACE"
+
+      - name: Configure (MinGW Release)
+        shell: msys2 {0}
+        # Use Ninja generator (override preset) so CMAKE_*_COMPILER_LAUNCHER works with sccache
+        run: |
+          set -euo pipefail
+          SCCACHE_EXE="$(cygpath -u "$SCCACHE_PATH")"
+          cmake --preset win-mingw-release -G Ninja \
+            -DCMAKE_C_COMPILER_LAUNCHER="$SCCACHE_EXE" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="$SCCACHE_EXE"
+
+      - name: Build (MinGW Release)
+        shell: msys2 {0}
+        run: cmake --build --preset win-mingw-release -j2
+
+      - name: Show sccache stats
+        shell: pwsh
+        run: |
+          & $env:SCCACHE_PATH --show-stats
+
+      - name: Stage native MinGW tree
+        id: stage
+        shell: pwsh
+        run: |
+          $exe = 'build/win-mingw-release/apps/dsd-cli/dsd-neo.exe'
+          if (!(Test-Path $exe)) { throw "Exe not found: $exe" }
+          $stage = 'dist/dsd-neo-mingw'
+          $binDir = Join-Path $stage 'bin'
+          $docDir = Join-Path $stage 'share/doc/dsd-neo'
+          $licenseDir = Join-Path $docDir 'licenses'
+          New-Item -ItemType Directory -Force -Path $binDir,$docDir,$licenseDir | Out-Null
+          Copy-Item -Force $exe $binDir
+          $triplet = $env:VCPKG_TARGET_TRIPLET
+          if (-not $triplet) { $triplet = $env:VCPKG_DEFAULT_TRIPLET }
+          if (-not $triplet) { $triplet = 'x64-mingw-dynamic-release' }
+          $vcpkgBin = Join-Path $env:GITHUB_WORKSPACE (Join-Path 'vcpkg_installed' (Join-Path $triplet 'bin'))
+          $vcpkgLib = Join-Path $env:GITHUB_WORKSPACE (Join-Path 'vcpkg_installed' (Join-Path $triplet 'lib'))
+          $searchDirs = @()
+          if (Test-Path $vcpkgBin) { $searchDirs += $vcpkgBin }
+          if (Test-Path $vcpkgLib) { $searchDirs += $vcpkgLib }
+          $msysCandidateBins = @()
+          if ($env:RUNNER_TEMP) {
+            $msysCandidateBins += (Join-Path $env:RUNNER_TEMP 'msys64\\mingw64\\bin')
+            $msysCandidateBins += (Join-Path $env:RUNNER_TEMP 'msys64\\ucrt64\\bin')
+          }
+          $msysCandidateBins += 'C:\\msys64\\mingw64\\bin'
+          $msysCandidateBins += 'C:\\msys64\\ucrt64\\bin'
+          foreach ($d in $msysCandidateBins) {
+            if ($d -and (Test-Path $d)) { $searchDirs += $d }
+          }
+          & 'tools/windows/stage_runtime_dlls.ps1' `
+            -TargetBinary (Join-Path $binDir 'dsd-neo.exe') `
+            -DestinationDir $binDir `
+            -SearchDirs $searchDirs
+
+          Copy-Item -Force LICENSE,COPYRIGHT,THIRD_PARTY.md $docDir -ErrorAction SilentlyContinue
+          Copy-Item -Force 'src/third_party/ezpwd/lesser.txt' (Join-Path $licenseDir 'ezpwd-LGPL-2.1-or-later.txt') -ErrorAction SilentlyContinue
+          Copy-Item -Force 'src/third_party/pffft/COPYING' (Join-Path $licenseDir 'pffft-FFTPACK.txt') -ErrorAction SilentlyContinue
+          $required = @('LICENSE','COPYRIGHT','THIRD_PARTY.md','licenses/ezpwd-LGPL-2.1-or-later.txt','licenses/pffft-FFTPACK.txt')
+          foreach ($f in $required) {
+            $p = Join-Path $docDir $f
+            if (!(Test-Path $p)) { throw "Missing required license file in staged docs: $p" }
+          }
+
+      - name: Smoke test staged binary (MinGW)
+        shell: pwsh
+        run: |
+          $exe = 'dist/dsd-neo-mingw/bin/dsd-neo.exe'
+          if (!(Test-Path $exe)) { throw "Staged exe not found: $exe" }
+          $bin = Split-Path -Parent $exe
+          # Ensure the staged tree is self-contained by avoiding PATH leakage
+          # from the build environment (vcpkg/MSYS2).
+          $env:PATH = "$bin;$env:SystemRoot\\System32;$env:SystemRoot"
+          Write-Host "Running: $exe -h"
+          & $exe -h
+
+      - name: Archive native MinGW ZIP
+        shell: pwsh
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $stage = 'dist/dsd-neo-mingw'
+          if ($env:REF_TYPE -eq 'tag' -and $env:REF_NAME) {
+            $zip = "dist/dsd-neo-mingw-x86_64-native-$($env:REF_NAME).zip"
+            $artName = "dsd-neo-mingw-x86_64-native-$($env:REF_NAME)"
+          } else {
+            $zip = "dist/dsd-neo-mingw-x86_64-native-nightly.zip"
+            $artName = "dsd-neo-mingw-x86_64-native-nightly"
+          }
+          if (Test-Path $zip) { Remove-Item -Force $zip }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip)
+          echo "ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          echo "ART_NAME=$artName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        id: zip
+
+      - name: Verify ZIP contents (extract and run help)
+        shell: pwsh
+        run: |
+          $zip = '${{ steps.zip.outputs.ZIP_PATH }}'
+          if (!(Test-Path $zip)) { throw "ZIP not found: $zip" }
+          $dest = Join-Path $env:RUNNER_TEMP ('dsd-neo-mingw-' + [System.Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $dest)
+          $bin = Join-Path $dest 'bin'
+          $exe = Join-Path $bin 'dsd-neo.exe'
+          if (!(Test-Path $exe)) { throw "Extracted exe not found: $exe" }
+          # Ensure the ZIP is self-contained by avoiding PATH leakage from the
+          # build environment (vcpkg/MSYS2).
+          $env:PATH = "$bin;$env:SystemRoot\\System32;$env:SystemRoot"
+          Write-Host "Running: $exe -h"
+          & $exe -h
+
+      - name: Upload native MinGW artifact
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: ${{ steps.zip.outputs.ART_NAME }}
+          path: ${{ steps.zip.outputs.ZIP_PATH }}
+          retention-days: 7
+
+      - name: Upload native MinGW release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          files: ${{ steps.zip.outputs.ZIP_PATH }}
+
+      - name: Upload native MinGW nightly asset (overwrite)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: nightly
+          prerelease: true
+          file: ${{ steps.zip.outputs.ZIP_PATH }}
+          asset_name: dsd-neo-mingw-x86_64-native-nightly.zip
+          overwrite: true

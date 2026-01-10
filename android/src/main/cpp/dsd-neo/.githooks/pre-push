@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pre-push hook: run clang-tidy/cppcheck on files that changed in the push.
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+cd "$repo_root"
+
+remote_name="${1:-origin}"
+
+zeros="0000000000000000000000000000000000000000"
+
+remote_head_ref=$(git symbolic-ref -q "refs/remotes/${remote_name}/HEAD" 2>/dev/null || true)
+if [[ -z "$remote_head_ref" ]]; then
+  if git show-ref --verify --quiet "refs/remotes/${remote_name}/main"; then
+    remote_head_ref="refs/remotes/${remote_name}/main"
+  elif git show-ref --verify --quiet "refs/remotes/${remote_name}/master"; then
+    remote_head_ref="refs/remotes/${remote_name}/master"
+  fi
+fi
+
+changed_paths=()
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Deleting a ref; nothing to analyze.
+  if [[ "$local_sha" == "$zeros" ]]; then
+    continue
+  fi
+
+  # Tags are often pushed in bulk and aren't useful for static analysis gating.
+  if [[ "$local_ref" == refs/tags/* ]]; then
+    continue
+  fi
+
+  if [[ "$remote_sha" == "$zeros" ]]; then
+    # New branch/ref: compare against remote default branch when possible; otherwise, don't analyze the whole repo.
+    if [[ -n "$remote_head_ref" ]]; then
+      mapfile -t diff_files < <(git diff --name-only --diff-filter=ACMR "${remote_head_ref}...${local_sha}" || true)
+    else
+      echo "pre-push: cannot determine ${remote_name} default branch; skipping static analysis for ${local_ref}." >&2
+      continue
+    fi
+  else
+    mapfile -t diff_files < <(git diff --name-only --diff-filter=ACMR "${remote_sha}...${local_sha}" || true)
+  fi
+  changed_paths+=("${diff_files[@]}")
+done
+
+if [[ ${#changed_paths[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+mapfile -t changed_paths < <(printf '%s\n' "${changed_paths[@]}" | sort -u)
+
+changed_sources=()
+changed_headers=()
+for p in "${changed_paths[@]}"; do
+  case "$p" in
+    build/*|src/third_party/*) continue ;;
+  esac
+  case "$p" in
+    *.c|*.cc|*.cpp|*.cxx) changed_sources+=("$p") ;;
+    *.h|*.hh|*.hpp|*.hxx) changed_headers+=("$p") ;;
+  esac
+done
+
+tidy_sources=("${changed_sources[@]}")
+
+escape_rg() {
+  printf '%s' "$1" | sed -e 's/[][(){}.^$*+?|\\]/\\&/g'
+}
+
+MAX_TUS_PER_HEADER=5
+for hdr in "${changed_headers[@]}"; do
+  include_key=""
+  if [[ "$hdr" == include/* ]]; then
+    include_key="${hdr#include/}"
+    include_key=$(escape_rg "$include_key")
+    pattern="^[[:space:]]*#[[:space:]]*include[[:space:]]*[<\\\"]${include_key}[>\\\"]"
+  else
+    base=$(basename "$hdr")
+    base=$(escape_rg "$base")
+    pattern="^[[:space:]]*#[[:space:]]*include[[:space:]]*[<\\\"][^>\\\"]*${base}[>\\\"]"
+  fi
+
+  mapfile -t matches < <(
+    rg -l --glob '!src/third_party/**' -g'*.c' -g'*.cc' -g'*.cpp' -g'*.cxx' "$pattern" src apps tests examples 2>/dev/null \
+      | head -n "$MAX_TUS_PER_HEADER" || true
+  )
+  tidy_sources+=("${matches[@]}")
+done
+
+mapfile -t tidy_sources < <(printf '%s\n' "${tidy_sources[@]}" | sort -u)
+
+if [[ ${#tidy_sources[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+cppcheck_sources=()
+for p in "${tidy_sources[@]}"; do
+  case "$p" in
+    src/*) cppcheck_sources+=("$p") ;;
+  esac
+done
+
+set +e
+echo "Running clang-tidy on ${#tidy_sources[@]} changed translation unit(s)..."
+tools/clang_tidy.sh -- "${tidy_sources[@]}"
+tidy_rc=$?
+
+cppcheck_rc=0
+if [[ ${#cppcheck_sources[@]} -gt 0 ]]; then
+  echo "Running cppcheck on ${#cppcheck_sources[@]} changed src/ translation unit(s)..."
+  tools/cppcheck.sh -- "${cppcheck_sources[@]}"
+  cppcheck_rc=$?
+fi
+set -e
+
+if [[ $tidy_rc -ne 0 || $cppcheck_rc -ne 0 ]]; then
+  exit 1
+fi
+exit 0

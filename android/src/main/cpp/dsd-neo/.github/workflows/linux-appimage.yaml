@@ -1,0 +1,409 @@
+name: linux-appimage
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - ".*"
+      - ".github/*.yml"
+      - ".github/*.yaml"
+      - ".github/**/*.yml"
+      - ".github/**/*.yaml"
+      - "**/*.md"
+
+jobs:
+  build-appimage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    env:
+      APPIMAGE_DEPS_DIR: ${{ github.workspace }}/.deps/appimage-${{ matrix.arch }}
+      APPIMAGE_CCACHE_DIR: ${{ github.workspace }}/.ccache/appimage-${{ matrix.arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.1
+      - name: Login to Docker Hub (optional)
+        # Only run on trusted contexts (not forked PRs), otherwise the
+        # `secrets` context is unavailable and would error.
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: docker/login-action@v3
+        continue-on-error: true
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+      - name: Enable QEMU for cross-arch containers
+        uses: docker/setup-qemu-action@v3.7.0
+        with:
+          platforms: all
+      - name: Ensure binfmt for aarch64 is registered
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --privileged --rm tonistiigi/binfmt --install aarch64 || true
+      - name: Prepare artifact naming
+        id: names
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          arch='${{ matrix.arch }}'
+          if [ "$REF_TYPE" = 'tag' ] && [ -n "$REF_NAME" ]; then
+            out="dist/dsd-neo-linux-${arch}-portable-${REF_NAME}.AppImage"
+            art="dsd-neo-linux-${arch}-portable-${REF_NAME}"
+            ver="$REF_NAME"
+          else
+            out="dist/dsd-neo-linux-${arch}-portable-nightly.AppImage"
+            art="dsd-neo-linux-${arch}-portable-nightly"
+            ver="nightly"
+          fi
+          mkdir -p dist
+          echo "OUT=$out" >> "$GITHUB_OUTPUT"
+          echo "ART=$art" >> "$GITHUB_OUTPUT"
+          echo "VER=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Compute dependency SHAs (for cache key)
+        id: dep-shas
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "mbe_sha=$(git ls-remote https://github.com/arancormonk/mbelib-neo HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "codec2_sha=$(git ls-remote https://github.com/arancormonk/codec2 HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "rtlsdr_sha=$(git ls-remote https://github.com/arancormonk/rtl-sdr HEAD | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare cache directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${APPIMAGE_DEPS_DIR}" "${APPIMAGE_CCACHE_DIR}"
+
+      - name: Restore AppImage dependency cache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.APPIMAGE_DEPS_DIR }}
+          key: deps-appimage-${{ runner.os }}-${{ matrix.arch }}-${{ steps.dep-shas.outputs.mbe_sha }}-${{ steps.dep-shas.outputs.codec2_sha }}-${{ steps.dep-shas.outputs.rtlsdr_sha }}
+          restore-keys: |
+            deps-appimage-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Restore AppImage ccache
+        uses: actions/cache@v5.0.1
+        with:
+          path: ${{ env.APPIMAGE_CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-appimage-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-appimage-${{ matrix.arch }}-
+      - name: Build in container and create AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch='${{ matrix.arch }}'
+          image='ubuntu:20.04'
+          if [ "$arch" = 'x86_64' ]; then
+            platform='linux/amd64'
+            ldeploy_url='https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage'
+            plugin_url='https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage'
+          else
+            platform='linux/arm64/v8'
+            ldeploy_url='https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage'
+            plugin_url='https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage'
+          fi
+
+          # Proactively pull the base image with retries; fall back to an Ubuntu
+          # mirror if Docker Hub returns unauthorized/rate-limited on runners.
+          tries=0
+          fallback_image='public.ecr.aws/lts/ubuntu:20.04'
+          until docker pull --platform "$platform" "$image"; do
+            tries=$((tries+1))
+            echo "docker pull failed (attempt $tries)." >&2
+            if [ $tries -ge 2 ]; then
+              echo "Falling back to mirror: $fallback_image" >&2
+              image="$fallback_image"
+              docker pull --platform "$platform" "$image"
+              break
+            fi
+            sleep 2
+          done
+
+          docker run --rm --platform "$platform" \
+            -e DEBIAN_FRONTEND=noninteractive \
+            -e VERSION='${{ steps.names.outputs.VER }}' \
+            -e MBE_SHA='${{ steps.dep-shas.outputs.mbe_sha }}' \
+            -e CODEC2_SHA='${{ steps.dep-shas.outputs.codec2_sha }}' \
+            -e RTLSDR_SHA='${{ steps.dep-shas.outputs.rtlsdr_sha }}' \
+            -e DEPS_DIR="/work/.deps/appimage-${{ matrix.arch }}" \
+            -e CCACHE_DIR="/work/.ccache/appimage-${{ matrix.arch }}" \
+            -v "$GITHUB_WORKSPACE":/work -w /work "$image" \
+            bash -lc '
+              set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                ca-certificates wget git build-essential cmake ninja-build pkg-config ccache \
+                libsndfile1-dev libpulse-dev libusb-1.0-0-dev libfftw3-dev libblas-dev liblapack-dev gfortran \
+                libncurses-dev patchelf file squashfs-tools desktop-file-utils doxygen graphviz imagemagick \
+                libboost-all-dev libarchive-dev libcurl4-openssl-dev zsync libglib2.0-dev \
+                libzstd-dev liblzma-dev libgpgme-dev libgcrypt20-dev gnupg \
+                libpng-dev libjpeg-dev cimg-dev
+
+              # Install a newer CMake (>=3.20) than Ubuntu 20.04 provides
+              arch=$(uname -m)
+              case "$arch" in
+                x86_64) cmUrl=https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-x86_64.sh ;;
+                aarch64) cmUrl=https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-aarch64.sh ;;
+                *) echo "Unsupported arch: $arch" >&2; exit 1 ;;
+              esac
+              wget -qO /tmp/cmake.sh "$cmUrl"
+              chmod +x /tmp/cmake.sh
+              /tmp/cmake.sh --skip-license --prefix=/usr/local
+              cmake --version
+
+              : "${MBE_SHA:?MBE_SHA not set}"
+              : "${CODEC2_SHA:?CODEC2_SHA not set}"
+              : "${RTLSDR_SHA:?RTLSDR_SHA not set}"
+              mbe_sha="$MBE_SHA"
+              codec2_sha="$CODEC2_SHA"
+              rtlsdr_sha="$RTLSDR_SHA"
+
+              mkdir -p "$CCACHE_DIR"
+              export CCACHE_BASEDIR=/work
+              export CCACHE_NOHASHDIR=true
+              export CCACHE_SLOPPINESS=time_macros
+              export CC="ccache gcc"
+              export CXX="ccache g++"
+              ccache --version || ccache -V
+              ccache --zero-stats || ccache -z || true
+              ccache --set-config=max_size=500M || ccache -M 500M || true
+              ccache --set-config=compression=true || ccache -o compression=true || true
+
+              DEPS="${DEPS_DIR:-/opt/deps}"
+              mkdir -p "$DEPS"
+              export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+              export CMAKE_PREFIX_PATH="$DEPS:${CMAKE_PREFIX_PATH:-}"
+              export LD_LIBRARY_PATH="$DEPS/lib:$DEPS/lib64:${LD_LIBRARY_PATH:-}"
+
+              build_dep() {
+                repo="$1" sha="$2" name="$3" mf_key="$4" cmake_opts="$5"
+                dst="$DEPS/lib/pkgconfig/${name}.pc"
+                dst64="$DEPS/lib64/pkgconfig/${name}.pc"
+                mf="$DEPS/.manifest"
+                if [ -f "$dst" ] || [ -f "$dst64" ]; then
+                  if [ -f "$mf" ] && grep -q "^${mf_key}=${sha}$" "$mf"; then
+                    echo "Using cached ${name} in $DEPS"
+                    return
+                  fi
+                  echo "Cached ${name} does not match desired SHA; rebuilding"
+                fi
+                git clone --depth 1 "$repo" "/tmp/${name}"
+                git -C "/tmp/${name}" fetch --depth 1 origin "$sha"
+                git -C "/tmp/${name}" checkout "$sha"
+                cmake -S "/tmp/${name}" -B "/tmp/${name}/build" -G Ninja \
+                  -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$DEPS" $cmake_opts
+                cmake --build "/tmp/${name}/build" -j
+                cmake --install "/tmp/${name}/build"
+              }
+
+              build_dep https://github.com/arancormonk/mbelib-neo "$mbe_sha" libmbe-neo mbe_sha ""
+              build_dep https://github.com/arancormonk/codec2 "$codec2_sha" codec2 codec2_sha ""
+              build_dep https://github.com/arancormonk/rtl-sdr "$rtlsdr_sha" librtlsdr rtlsdr_sha "-DDETACH_KERNEL_DRIVER=ON"
+
+              mf="$DEPS/.manifest"
+              : > "$mf"
+              echo "mbe_sha=$mbe_sha" >> "$mf"
+              echo "codec2_sha=$codec2_sha" >> "$mf"
+              echo "rtlsdr_sha=$rtlsdr_sha" >> "$mf"
+              echo "updated=$(date -u +%FT%TZ)" >> "$mf"
+
+              cmake -S . -B build/appimage -G Ninja -DCMAKE_BUILD_TYPE=Release -DDSD_ENABLE_LTO=OFF -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF
+              cmake --build build/appimage -j
+              ./build/appimage/apps/dsd-cli/dsd-neo -h || true
+
+              rm -rf AppDir
+              cmake --install build/appimage --prefix AppDir/usr
+
+              docdir="AppDir/usr/share/doc/dsd-neo"
+              required=(LICENSE COPYRIGHT THIRD_PARTY.md licenses/ezpwd-LGPL-2.1-or-later.txt licenses/pffft-FFTPACK.txt)
+              for f in "${required[@]}"; do
+                if [ ! -f "$docdir/$f" ]; then
+                  echo "ERROR: missing required license file: $docdir/$f" >&2
+                  exit 1
+                fi
+              done
+
+              mkdir -p AppDir/usr/share/applications
+              cp -f packaging/appimage/dsd-neo.desktop AppDir/usr/share/applications/
+              mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+              src_icon="images/dsd-neo.png"; [ -f "$src_icon" ] || src_icon="images/dsd-neo_const_view.png"
+              # Normalize to a valid square icon size
+              convert "$src_icon" -resize 256x256^ -gravity center -extent 256x256 PNG32:/work/AppDir/usr/share/icons/hicolor/256x256/apps/dsd-neo.png
+
+              # Use workspace cache dir (avoids any potential noexec tmp mounts)
+              mkdir -p /work/.cache/linuxdeploy
+              cd /work/.cache/linuxdeploy
+              # Select linuxdeploy binaries inside the container
+              arch=$(uname -m)
+              case "$arch" in
+                x86_64)
+                  ldeploy_url=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+                  plugin_url=https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+                  ;;
+                aarch64)
+                  # Prefer continuous; fall back to known-good tags if execution fails under CI emulation
+                  ldeploy_url=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+                  plugin_url=https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage
+                  ;;
+                *) echo "Unsupported arch for linuxdeploy: $arch" >&2; exit 1 ;;
+              esac
+              # Helper to run linuxdeploy AppImage directly (with robust TMPDIR)
+              try_linuxdeploy() {
+                url="$1"; plugin="$2"
+                rm -f linuxdeploy.AppImage linuxdeploy-plugin-appimage || true
+                wget -qO linuxdeploy.AppImage "$url"
+                wget -qO linuxdeploy-plugin-appimage "$plugin"
+                chmod +x linuxdeploy.AppImage linuxdeploy-plugin-appimage || return 1
+                export PATH="$PWD:$PATH"
+                # Avoid FUSE/noexec issues by extracting to a writable, executable TMPDIR
+                export APPIMAGE_EXTRACT_AND_RUN=1
+                export TMPDIR="/work/.cache/linuxdeploy/tmp"
+                mkdir -p "$TMPDIR"
+                # Instruct plugin-appimage to write directly to our desired output path
+                export OUTPUT="/work/${{ steps.names.outputs.OUT }}"
+                mkdir -p "$(dirname "$OUTPUT")"
+                echo "linuxdeploy: $(file -b linuxdeploy.AppImage)"
+                echo "plugin:      $(file -b linuxdeploy-plugin-appimage)"
+                # Try direct exec first
+                if ./linuxdeploy.AppImage \
+                    --appdir /work/AppDir \
+                    -e /work/AppDir/usr/bin/dsd-neo \
+                    -d /work/packaging/appimage/dsd-neo.desktop \
+                    -i /work/AppDir/usr/share/icons/hicolor/256x256/apps/dsd-neo.png \
+                    --output appimage; then
+                  return 0
+                fi
+                # On aarch64 under QEMU, try invoking via dynamic loader
+                if [ "$(uname -m)" = aarch64 ] && [ -x /lib/ld-linux-aarch64.so.1 ]; then
+                  echo "Direct exec failed; retrying via dynamic loader" >&2
+                  /lib/ld-linux-aarch64.so.1 ./linuxdeploy.AppImage \
+                    --appdir /work/AppDir \
+                    -e /work/AppDir/usr/bin/dsd-neo \
+                    -d /work/packaging/appimage/dsd-neo.desktop \
+                    -i /work/AppDir/usr/share/icons/hicolor/256x256/apps/dsd-neo.png \
+                    --output appimage
+                  return $?
+                fi
+                return 2
+              }
+
+              # Try continuous first, fall back to pinned tags on failure
+              if [ "$arch" = aarch64 ]; then
+                # Build native linuxdeploy, plugin, and appimagetool from source to avoid executing AppImages under QEMU
+                export OUTPUT="/work/${{ steps.names.outputs.OUT }}"
+                mkdir -p "$(dirname "$OUTPUT")"
+                export PATH="/usr/local/bin:$PATH"
+                echo "Building native appimagetool for aarch64..."
+                git clone --depth 1 https://github.com/AppImage/appimagetool.git /tmp/appimagetool
+                cmake -S /tmp/appimagetool -B /tmp/appimagetool/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+                cmake --build /tmp/appimagetool/build --target appimagetool -j
+                # appimagetool target is placed in build/src/
+                install -m0755 /tmp/appimagetool/build/src/appimagetool /usr/local/bin/appimagetool
+                echo "Building native linuxdeploy for aarch64..."
+                git clone --depth 1 https://github.com/linuxdeploy/linuxdeploy.git /tmp/linuxdeploy
+                # Ensure required submodules are present (cmake-scripts, linuxdeploy-desktopfile, etc.)
+                git -C /tmp/linuxdeploy submodule update --init --recursive
+                cmake -S /tmp/linuxdeploy -B /tmp/linuxdeploy/build -G Ninja \
+                  -DCMAKE_BUILD_TYPE=Release \
+                  -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DENABLE_UNIT_TESTS=OFF -DENABLE_TESTS=OFF -DLINUXDEPLOY_BUILD_TESTS=OFF
+                cmake --build /tmp/linuxdeploy/build -j
+                # linuxdeploy binary path can be in build/bin or build/src depending on upstream changes
+                if [ -f /tmp/linuxdeploy/build/bin/linuxdeploy ]; then
+                  install -m0755 /tmp/linuxdeploy/build/bin/linuxdeploy /usr/local/bin/linuxdeploy
+                elif [ -f /tmp/linuxdeploy/build/src/linuxdeploy ]; then
+                  install -m0755 /tmp/linuxdeploy/build/src/linuxdeploy /usr/local/bin/linuxdeploy
+                else
+                  echo "linuxdeploy binary not found after build" >&2
+                  ls -la /tmp/linuxdeploy/build || true
+                  ls -la /tmp/linuxdeploy/build/bin || true
+                  ls -la /tmp/linuxdeploy/build/src || true
+                  exit 1
+                fi
+                echo "Building native linuxdeploy-plugin-appimage for aarch64..."
+                git clone --depth 1 https://github.com/linuxdeploy/linuxdeploy-plugin-appimage.git /tmp/linuxdeploy-plugin-appimage
+                # Initialize any submodules the plugin may require
+                git -C /tmp/linuxdeploy-plugin-appimage submodule update --init --recursive || true
+                cmake -S /tmp/linuxdeploy-plugin-appimage -B /tmp/linuxdeploy-plugin-appimage/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+                cmake --build /tmp/linuxdeploy-plugin-appimage/build -j
+                # plugin binary path can vary; handle common locations
+                if [ -f /tmp/linuxdeploy-plugin-appimage/build/bin/linuxdeploy-plugin-appimage ]; then
+                  install -m0755 /tmp/linuxdeploy-plugin-appimage/build/bin/linuxdeploy-plugin-appimage /usr/local/bin/linuxdeploy-plugin-appimage
+                elif [ -f /tmp/linuxdeploy-plugin-appimage/build/src/linuxdeploy-plugin-appimage ]; then
+                  install -m0755 /tmp/linuxdeploy-plugin-appimage/build/src/linuxdeploy-plugin-appimage /usr/local/bin/linuxdeploy-plugin-appimage
+                elif [ -f /tmp/linuxdeploy-plugin-appimage/build/linuxdeploy-plugin-appimage ]; then
+                  install -m0755 /tmp/linuxdeploy-plugin-appimage/build/linuxdeploy-plugin-appimage /usr/local/bin/linuxdeploy-plugin-appimage
+                else
+                  echo "linuxdeploy-plugin-appimage binary not found after build" >&2
+                  ls -la /tmp/linuxdeploy-plugin-appimage/build || true
+                  ls -la /tmp/linuxdeploy-plugin-appimage/build/bin || true
+                  ls -la /tmp/linuxdeploy-plugin-appimage/build/src || true
+                  exit 1
+                fi
+                echo "linuxdeploy version: $(/usr/local/bin/linuxdeploy --version || true)"
+                echo "appimagetool version: $(/usr/local/bin/appimagetool --version || true)"
+                # Create the AppImage using native binaries
+                /usr/local/bin/linuxdeploy \
+                  --appdir /work/AppDir \
+                  -e /work/AppDir/usr/bin/dsd-neo \
+                  -d /work/packaging/appimage/dsd-neo.desktop \
+                  -i /work/AppDir/usr/share/icons/hicolor/256x256/apps/dsd-neo.png \
+                  --output appimage
+              else
+                # x86_64 path (prefer prebuilt AppImages)
+                if ! try_linuxdeploy "$ldeploy_url" "$plugin_url"; then
+                  echo "continuous linuxdeploy failed; trying pinned versions" >&2
+                  for tag in 1-alpha-20240109-1 1-alpha-20231206-1; do
+                    if try_linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/$tag/linuxdeploy-x86_64.AppImage" "$plugin_url"; then
+                      break
+                    fi
+                  done
+                fi
+              fi
+              # Ensure the expected output file exists
+              if [ ! -s "/work/${{ steps.names.outputs.OUT }}" ]; then
+                echo "ERROR: AppImage output not produced at /work/${{ steps.names.outputs.OUT }}" >&2
+                echo "Contents of current dir:" >&2
+                ls -la >&2
+                exit 1
+              fi
+
+              echo "ccache stats:"
+              ccache -s || true
+            '
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: ${{ steps.names.outputs.ART }}
+          path: ${{ steps.names.outputs.OUT }}
+          retention-days: 7
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          files: ${{ steps.names.outputs.OUT }}
+          name: ${{ steps.names.outputs.ART }}
+          generate_release_notes: true
+      - name: Upload nightly asset (overwrite)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: nightly
+          prerelease: true
+          file: ${{ steps.names.outputs.OUT }}
+          asset_name: ${{ steps.names.outputs.ART }}.AppImage
+          overwrite: true

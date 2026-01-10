@@ -1,0 +1,1803 @@
+
+// 
+// cut		-- C++ Unit Test Framework
+// 
+
+/*
+ * Ezpwd Reed-Solomon -- Reed-Solomon encoder / decoder library
+ * 
+ * Copyright (c) 2022, Dominion Research & Development Corp.
+ *
+ * Ezpwd Reed-Solomon is free software: you can redistribute it and/or modify it under the terms of
+ * the GNU General Public License as published by the Free Software Foundation, either version 3 of
+ * the License, or (at your option) any later version.  See the LICENSE file at the top of the
+ * source tree.  Ezpwd Reed-Solomon is also available under Commercial license.  The Djelic BCH code
+ * under djelic/ and the c++/ezpwd/bch_base wrapper is redistributed under the terms of the GPLv2+,
+ * regardless of the overall licensing terms.
+ * 
+ * Ezpwd Reed-Solomon is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
+ * the GNU General Public License for more details.
+ */
+#ifndef _INCLUDE_CUT_H
+#define _INCLUDE_CUT_H 1
+
+#include <vector>
+#include <stack>
+#include <iostream>
+#include <iomanip>
+#include <string>
+#include <sstream>
+#include <exception>
+#include <stdexcept>
+#include <memory>
+
+#include <math.h>
+#include <time.h>
+#include <string.h>
+
+// 
+// Designed following the motto; do the simplest thing that will work
+// 
+//     Here is how this unit test framework works.  Tests are
+// organized in a heirarchy below the 'cut::root' test suite; suites
+// may contain suites that may contain suites.
+// 
+//     Four predefined roots are suggested (cut::root is required):
+//
+//         cut:::root		-- All Unit and Integration tests
+//           cut:::integration	-- Long, dependencies or human intervention
+//           cut:::unit		-- Short, self-contained and reliable tests
+//         
+//         cut:::development	-- Unreliable, still in development
+// 
+//     These could be defined like this:
+// 
+//	   namespace cut {}
+//		test root(			"All Tests" );
+//		test integration( 0, 0, root,	"integration" );
+//		test unit( 0, 0, root,		"unit" );
+//		test development(		"development" );
+//	   }
+// 
+//     A test suite "runner" of type 'cut::runner' traverses all of
+// the test suites (except for those under cut::development), and is
+// available to each test suite under the name 'assert'.  This
+// "runner" knows how to output the test results in various formats
+// (eg. textual or HTML).  Thus, the 'assert' variable is used to
+// perform all of the test suite's assertions, and outputs the test
+// results in the appropriate format.
+//
+//     Each 'cut::test' suite may contain 0 or more individual
+// assertions, using the assert.ISTRUE(...), assert.ISEQUAL(...),
+// etc. macros.  Each assertion has a result of 'success' (test result
+// matched expected), 'failure' (test result did not match expected
+// result) or 'unknown' (expected test result not yet specified).
+// 
+//     A test suite may want to run another suite of tests; for
+// example, if the same tests need to be run with a variety of initial
+// conditions.  It can assert the expected result of this suite test.
+// 
+//     All tests contained in all compilation unit (*.o) file linked
+// into the application are available to be run.  No additional
+// linkage effort is required, and only the tests related to
+// functionality used by the application are linked.
+// 
+// 
+// TEST SUITES
+// 
+//     Each test suite is a separate instance of a class derived
+// either directly from cut::test, or from some other class derived
+// from cut::test.  Each suite is NOT derived from its "parent" suite;
+// the parent-child relationship is purely for organizing the order in
+// which the suites (and all of their sub-suites) run.
+// 
+//     Each test "chains" itself to its parent when created (using the
+// CUT(...) macro).  The parent must either be in the same file, or
+// the global cut::root object.  Since C++ doesn't define the
+// initialization order for global data objects BETWEEN separate files
+// (only WITHIN a file), it is not possible to determine which file's
+// tests will run first (unless one file's tests are referenced from
+// another file).  It is also, therefore, impossible to know whether
+// any test's "parent" test object has been "constructed"; hence, the
+// testhook object is a struct (not a class) and does not depend on
+// constructors for initialisation; it detects initialisation using
+// magic numbers.  This is essential to providing the guarantee that
+// NO housekeeping is required when adding new tests!
+// 
+//     Each test suite contains 0 or more assertions, all of which
+// must be successful for the test suite to be considered successful.
+// Each assertion is actually implemented by a virtual method in the
+// cut::runner class, which traverses all the test suites defined and
+// passes a reference to itself into each cut::test::run() method,
+// named "assert".  Each test uses this "assert" object to perform its
+// assertions, and any output.  The cut::runner methods available
+// within the test suite are:
+// 
+// TEST ASSERTIONS
+// 
+//     assert.ISEQUALUNKNOWN(	actual )
+//     assert.ISTRUES( 		actual, 			"description" )
+//     assert.ISTRUE( 		actual )
+//     assert.ISFALSES(		actaul,				"description" )
+//     assert.ISFALSE( 		actual )
+//     assert.ISEQUALS( 	actual,	expected,		"description" )
+//     assert.ISEQUAL( 		actual, expected )
+//     assert.ISNOTEQUALS( 	actual, expected,		"description" )
+//     assert.ISNOTEQUAL( 	actual, expected )
+//     assert.ISEQUALDELTAS(	actual, expected, delta,	"description" )
+//     assert.ISEQUALDELTA( 	actual, expected, delta )
+//     assert.ISEQUALPERCENTS(	actual, expected, percent,	"description" )
+//     assert.ISEQUALPERCENT(	actual, expected, percent )
+//     assert.ISNOTEQUALDELTAS( actual, expected, delta, 	"description" )
+//     assert.ISNOTEQUALDELTA(	actual,	expected, delta )
+//     assert.ISNOTEQUALPERCENTS(actual,expected, percent,	"description" )
+//     assert.ISNOTEQUALPERCENT(actual, expected, percent )
+//     assert.ISFAILED( "actual event description", "expected event description" )
+//     assert.run(suite);	- manually run a sub-suite
+//     assert.sparse();		- force test output to be "sparse" for this suite (elide successful tests)
+//     assert.out() << ...;	- test output stream always intercepted in cut::htmlrunner
+//     std::cout    << ...;	- intercepted in cut::htmlrunner by default
+// 
+//     Since many of the ASSERT...( ) assertions resolve to templates,
+// ensure that your 'actual' and 'expected' types are identical when
+// passed.  If you get unresolved template complaints due to operand
+// types, add the proper casts.  For example:
+// 
+//     assert.ISEQUAL( 3.0, 3 );		// will not resolve template due to type incompatibility
+//     assert.ISEQUAL( 3.0, double( 3 ));	// Fine.
+//     assert.ISEQUAL( (int)3.0, 3 );		// Fine.
+// 
+//     Of course, comparing floating point values for absolute
+// equality is dubious at any time; you should probably use:
+// 
+//     assert.ISEQUALDELTA( 3.0, double( 3 ), 1e-6 );
+// 
+// TEST EXECUTION
+// 
+//     To execute your unit tests, you require 3 things; a 'cut::test
+// root' instance (and perhaps some other 'cut::test' instance(s)), a
+// 'cut::runner' instance, and an invocation 
+// 
+//     1) Your 'root' test is put whereever your 'main' function is;
+// it is the root of your program's test suite tree; all other tests
+// link themselves to it.  You'll name it after your program:
+// 
+//         namespace cut {
+//             test		root( "Your Program's Tests" );
+//             CUT( root, somesuite, "Some Named Suite" ) {
+//                 std::cout << "Simple math test" << std::endl;
+//                 assert.ISEQUAL( 1 + 1, 2 );
+//             }
+//         }
+// 
+//     2) An instance of 'cut::runner' (or of a derived class)
+// actually runs all the test suites, running each test suite, and
+// pasing <I>itself</I> as the 'assert' object!  Your 'cut::runner'
+// defines how all test suite output is handled (eg. plain text, html,
+// Interstellar Transport Protocol, whatever).
+// 
+//         cut::runner		textrunner( std::cout );
+// 
+//      3) Finally, you'll need to run the tests.  You can run all
+// (the default), some specific test heirarchy, or one named test
+// within a heirarchy.  You'll need just one of these exapmple lines:
+// 
+//         textrunner.run();			// run all suites
+//         textrunner.run( cut::root );		// same as above
+//         textrunner.run( "Some Named Suite" );// run named suite
+//         textrunner.run( "Some Named Suite",	// search within heirarchy
+//                        somesuites );
+// 
+// 
+//     You're done!  The following is a completely functional test
+// program (it will report a test failure, detecting the invalid test
+// case):
+// 
+// ----------------------------------------------------------------------------
+// 
+// #include <cut>
+// #include <math.h>
+// namespace cut {
+//     //
+//     // Create a test suite, which chains itself automatically
+//     // beneath cut::root.  Don't clutter up your own namespace!
+//     // 
+//     test			root( "Simple C++ Unit Test" );
+// 
+//     //
+//     // Create class derived from cut::test, and defines its run() method. The
+//     // instance chains itself automatically beneath the given cut::test.
+//     // 
+//     CUT( root, SqrtTest, "Simple sqrt() Test" ) {
+//         assert.out() << "tests sqrt(2) == 1.4(+/- 0.1)" << std::endl;
+//         assert.ISEQUALDELTA( sqrt( 2.0 ), 1.4, 0.01 );
+//     }
+// }
+// 
+// int
+// main(
+//     int			argc,
+//     char 	       	      **argv )
+// {
+//     // 
+//     // Create cut::runner instances, and run all tests, with HTML output.
+//     // Return 0 on success, ! 0 on failure.
+//     // 
+//     cut::htmlrunner 		html( std::cout );	// use cut::runner for textual output
+//     return ! html.run();
+// }
+// ----------------------------------------------------------------------------
+// 
+// Save it as cutone.C (in the same directory as this file),
+// compile and run using:
+// 
+//     $ g++ -I . -o cutone cutone.C
+//     $ ./cutone
+//     Content-type: text/html
+// 
+//     <html> 
+//     ... 
+//     HTML test output
+//     ...
+//     </html>
+// 
+// You'll notice that a CGI MIME type header is emitted, so you can run the program in a CGI
+// environment.  Or, just save it in a file, and view it with your web brower!
+// 
+// Replace "cut::htmlrunner" with "cut::runner", and you'll get:
+//     $ ./cutone
+//     (cutone.C:  40):  FAILED: Simple sqrt() Test: "sqrt( 2.0 )"  == 1.4 (+/-0.01 == 0.714286%), actual: 1.41421 (+0.0142136 == +1.01525%)
+//             1 TOTAL tests.
+//             0 SUCCESSES (  0%)
+//             1 FAILURES  (100%)
+//     $ 
+// 
+// This format is compatible with "emacs" 'compilation-mode' error parsing, so you can jump
+// directly to the erroneous unit test using the 'next-error' command.
+// 
+
+
+
+// 
+// CUT(
+//     cut::test	parent,		// parent test suite to chain to
+//     cut::test	suite,		// this suites's class name
+//     const char     *desc )		// brief description of suite
+// {
+//     ... The body of the suite::run() method ...
+// }
+// 
+// DESCRIPTION
+// 
+//     Defines a simple C++ Unit Test class, chains it into the test
+// suite heirarchy, then creates an instance of the the class and
+// prepares to define its virtual test::run method.
+// 
+#define CUT( parent, suite, desc )	 			\
+    class suite##_;						 \
+    cut::onetest<suite##_>					  \
+            suite( __FILE__, __LINE__, parent, desc );		   \
+    template<> void cut::onetest<suite##_>::run( cut::runner &assert ) /* { test body } */
+
+//
+// CUTEXCEPTION( 
+//     cut::test	parent,		// parent test suite to chain to
+//     cut::test	suite,	   	// this suite's class name
+//     class		exception, 	// class of exception expected
+//     const char      *desc )    	// brief description of suite
+// {
+//     ... The body of the suite::run() method
+// }
+// 
+//     Defines a unit test where trapping the given exception
+// indicates success, anything else failure.
+// 
+#define CUTEXCEPTION( parent, suite, thrown, desc )		\
+    class suite##_;						 \
+    cut::exctest<suite##_,thrown>				  \
+        suite( __FILE__, __LINE__ , #thrown, parent, desc );	   \
+    template<> void cut::exctest<suite##_,thrown>::run( cut::runner &assert ) /* { test body } */
+
+// 
+// CUTEXTERN( suite )
+// CUTEXCEPTIONEXTERN( suite, thrown )
+// 
+//     Declare the name 'suite' as a CUT(...)  or CUTEXCEPTION( ... ) test suite, defined in some
+// other compilation unit.  Declares the name 'suite', which is of (derived from) type cut::test.
+// For example, if you wish to FORCE the linkage of all unit tests in some compilation unit, but
+// your program doesn't include any symbols from the compilation unit (eg. the compilation unit
+// contains nothing BUT CUT unit tests!), then:
+// 
+//      CUTEXTERN( some_unit_test );
+// 	const cut::test	       &force_linkage_of_some_unit_test	= some_unit_test;
+// 
+#define CUTEXTERN( suite )					\
+    class suite##_;						 \
+    extern cut::onetest<suite##_>		suite;
+
+#define CUTEXCEPTIONEXTERN( suite, thrown )			\
+    class suite##_;						 \
+    extern cut::exctest<suite##_,thrown>	suite;
+
+
+// 
+// The C++ Unit Test namespace.  Define all of your test suites
+// within this namespace, to prevent cluttering of your program's
+// namespace with test classes and instances.
+// 
+namespace cut {
+
+    class			test;
+    class			runner;
+    class			htmlrunner;
+
+    // 
+    // Define the global root test suite.  Must be defined in the
+    // user's program (probably at same place cut::runner is used)
+    // 
+    extern test			root;
+
+    // Available (optinoal) CUT test roots to hang various classes of tests from.
+    extern test 		unit;
+    extern test 		integration;
+    extern test 		development;
+
+    // 
+    // Assertion statuses, statistical counters, etc.
+    // 
+    typedef enum {
+	failure 	= 0,
+	success 	= 1, 
+	unknown 	= 2 
+    } 				status;
+
+    // 
+    // Use functions to return program constants instead of global
+    // static variables, to avoid any externals other than cut::root.
+    // 
+    inline const char	       *statusname(
+				    status		s )
+    {
+	switch( s ) {
+	case failure:	return "FAILED";
+	case success:	return "SUCCESS";
+	default:	return "UNKNOWN";
+	}
+    }
+
+    // 
+    // testhook
+    // 
+    ///     A hook upon which to hang a vector of tests.  Requires NO initialization before use!
+    /// All cut::test added are assumed to be globals, or created/destroyed by other methods -- we
+    /// will not presume to 'delete' them...
+    /// 
+    struct testhook {
+    private:
+	static const unsigned long
+				_magic	= 0x53A9E5AD;
+        std::vector<test*>     *_children;
+	unsigned long		_check;
+
+	void			initialize()
+	{
+	    _check = (((unsigned long)_children) ^ _magic );
+	}
+	bool			initialized()
+	    const
+	{
+	    return _check == (((unsigned long)_children) ^ _magic );
+	}
+
+    public:
+			       ~testhook()
+	{
+	    if ( initialized() ) {
+		delete _children;
+	    }
+	}
+
+	void			add(
+				    cut::test  	       &t )
+	{
+	    // Check if initialized, and if not, do it!
+	    if ( ! initialized() ) {
+		_children	= new std::vector<test*>;
+		initialize();
+	    }
+	    _children->push_back( &t );
+	}
+
+	std::vector<test*>     *kids() 
+	{
+	    if ( ! initialized() )
+		return 0;
+	    return _children;
+	}
+    };
+
+    // A container to hold the counts of test successes and failures.
+    struct statuscounters {
+	int			counts[3];
+	int			suites;
+
+				statuscounters()
+	{
+	    counts[0]	= 0;
+	    counts[1]	= 0;
+	    counts[2]	= 0;
+	    suites	= 0;
+	}
+	// The total number of tests (assertions) executed so far.
+	int			total() {
+	    return counts[success] + counts[failure] + counts[unknown];
+	}
+
+	int			successes() {
+	    return counts[success];
+	}
+	int			failures() {
+	    return counts[failure];
+	}
+	int			unknowns() {
+	    return counts[unknown];
+	}
+    };
+
+
+    // 
+    // Base of cut::test class, from which all tests are derived.
+    // 
+    class test {
+    private:
+	std::string		m_name;		// This tests's name
+	testhook		m_children;	// This tests children
+	const char	       *m_file;		// Location where suite was defined;
+	int			m_line;		//   useful for failures w/o location eg. exceptions
+
+    public:
+
+	// Accessors
+	virtual const std::string      &name() { return m_name; }
+	virtual const char	       *file() { return m_file;	}
+	virtual int		       &line() { return m_line;	}
+        virtual std::vector<test*>     *kids() { return m_children.kids(); }
+
+	// Constructor, non-chained.  Used for rooting isolated test branches, such as cut::root.
+				test(
+				    const char	       *description )
+				    : m_name( description )
+				    , m_line( 0 )
+	{
+	    ;
+	}
+	// Constructor, chained.
+				test(
+				    const char	       *filename,
+				    int 		linenumber,
+				    test	       &suite,
+				    const char	       *description )
+				    : m_name( description )
+				    , m_file( filename )
+				    , m_line( linenumber )
+	{
+	    suite.m_children.add( *this );
+	}
+
+	// 
+	// Destructor.
+	// 
+	///     Normally unused, because cut::tests aren't generally destroyed, but necessary to
+	/// avoid warnings.  Also, if your program arranges to perform destruction of globals to
+	/// test for memory leaks, then this will clean up.
+	/// 
+	virtual		       ~test()
+	{ 
+	    ;
+	}
+
+	// Run the suite's tests, trapping any exceptions.  Overriden
+	// when certain exceptions are expected.  Default behaviour
+	// traps any exception thrown, and issues an failure (see
+	// method definition, below).
+	virtual void		trap(
+				    runner	       &assert );
+
+	// Run the suite's tests.  Overridden in each suite.
+	virtual void		run(
+				    runner             & )
+	{
+	    ;
+	}
+    };
+
+    // 
+    // Implements one basic test suite.  <class S> is created by
+    // macros (above) and is used only to unique-ify each test.
+    // 
+    template<class S>
+    class onetest
+	: public test {
+    public:
+				onetest<S>(
+				    const char	       *filename,
+				    int			linenumber,
+				    test	       &suite,
+				    const char	       *description )
+				    : test( filename, linenumber, suite, description )
+	{
+	    ;
+	}
+
+	virtual		       ~onetest<S>()
+	{
+	    ;
+	}
+
+	// Run the suite's tests.  Overridden in each suite.
+	virtual void		run(
+				    class runner       &/* assert */ )
+	{
+	    ;
+	}
+    };
+
+    // 
+    // Implements one basic test suite, with the specified exception
+    // expected before the suite's tests terminate.
+    // 
+    template<class S, class E>
+    class exctest
+	: public onetest<S> {
+	const char	       *m_excname;	// Remember exception we expect
+
+    public:
+
+	// 
+	// Constructor, Destructor
+	// 
+	///     Chain this test instance into the given parent test suite.
+	/// 
+				exctest<S,E>(
+				    const char	       *filename,
+				    int			linenumber,
+				    const char	       *exceptionname,
+				    test	       &suite,
+				    const char	       *description )
+				    : onetest<S>( filename, linenumber, suite, description )
+				      , m_excname( exceptionname )
+	{
+	    ;
+	}
+
+	virtual		       ~exctest<S,E>()
+	{
+	    ;
+	}
+
+	// Trap any exceptions, issuing failure uinless the specified exception is 
+	// caught before run() terminates.
+	virtual void		trap(
+				    class runner       &assert );
+	// Run the suite's tests.  May contain any test assertions,
+	// but must throw the specified exception before returning!
+	virtual void		run(
+				    class runner       &assert );
+    };
+
+    // 
+    // Basic test runner; collects assertion results and prints summary.
+    // 
+    // Traverses tests heirarchy, runs the test, and all sub-tests.
+    // Override methods to implement alternative test output handling
+    // (see class cut::htmlrunner)
+    // 
+    class runner {
+
+    protected:
+	statuscounters		m_stats;	// assertion test status counters
+	int			m_level;	// how many suites deep are we
+	int			m_indent;
+	std::ostream	        m_out;		// main test output stream
+	bool			m_sparse;	// elide successful tests
+	std::stack<bool>	m_sparsestack;	// settings of m_sparse in parent suites
+
+	// 
+	// Traverse a (possible) vector of test suites, invoking
+	// test::run(), and all sub-suites run() methods.  Invokes
+	// runner::presuite(), pre- and posttest() and postsuite()
+	// methods.
+	// 
+	void 			traverse(
+				    test	       &suite )
+	{
+	    // 
+	    // Run pre-test setup.  Increment afterwards, so that each
+	    // suite run will be counted, if the test runner examines
+	    // the counters between pretest() and posttest().
+	    // 
+	    presuite( suite );
+	    ++ m_stats.suites;
+
+	    // 
+	    // Run the pretest() method, the suite's test case
+	    // (trapping exceptions with the supplied exception
+	    // trapper), and the posttest() method.
+	    // 
+	    pretest( suite );
+	    suite.trap( *this );
+	    posttest( suite );
+
+	    // 
+	    // Run all sub-tests, collecting their output and adding their results.
+	    // 
+	    std::vector<test*>	       *kids	= suite.kids();
+	    if ( kids ) {
+		for ( std::vector<test*>::iterator t = kids->begin();
+		      t != kids->end();
+		      ++t ) {
+		    traverse( **t );
+		}
+	    }
+
+	    // Run the runner::postsuite() method.
+	    postsuite( suite );
+	}
+
+    public:
+	// 
+	// Constructor, test runner, and failure count methods.
+	// Creates an instance of cut::runner, capable of traversing
+	// the test suite, running the tests, and reporting the
+	// results.  The runner runs all tests.
+	// 
+	// Our output stream m_out re-uses the streambuf of the
+	// provided std::ostream.  If this happens to be std::cout,
+	// then even if a derived cut::runner redirects std::cout,
+	// we'll still end up writing to underlying destination of
+	// std::cout whenever m_out is used.
+	// 
+				runner(
+				    std::ostream       &outstream,
+				    bool		setsparse = true )// don't include successful tests
+	  			    : m_out( outstream.rdbuf() )	// reference streambuf of provided stream
+	   			    , m_sparse( setsparse )
+	{
+	    m_level	= 0;
+	    m_indent	= 2;
+	}
+
+	// 
+	// Destructor.
+	// 
+	/// TODO:
+	/// 
+	///     Ensure that ~runner doesn't delete m_out's std::streambuf *; We didn't allocate it
+	/// -- we borrowed it!
+	/// 
+	virtual		       ~runner()
+	{
+	    ;
+	}
+
+	// cut::runner::run()
+	// 
+	//     Run the (optionally named) suite of tests, returning
+	// bool true iff the suite runs with no failure/unknown tests.
+	// This allows a suite to invoke another suite, and easily
+	// test for successful completion:
+	// 
+	//                    ... setup ... 
+	// thissuite.C:  114: assert.ISTRUE( assert.run( somesuite ));
+	//                    ... teardown ... 
+	// 
+	// If somesuite fails, you'll get:
+	// 
+	// somesuite.C:   72: FAILED  : Some error in the called sub-suite
+	// thissuite.C:  114: FAILED  : The context in which it failed.
+	// 
+	//     This provides the equivalent (but more easily and
+	// consistently managed) functionality to setup() and
+	// teardown() methods provided by alternative Unit Testing
+	// frameworks.  There are ONLY test suite run() methods, that
+	// can optionally invoke other test suites...
+	// 
+	// RETURN VALUE
+	// 
+	//     'true' iff successful (no failures detected).
+	// 
+	virtual bool		run(
+				    test	       &suite 	= cut::root )
+	{
+	    static std::vector<test*>	seen;	// avoid recursive suite invocations.
+	    for ( std::vector<test*>::iterator s = seen.begin();
+		  s != seen.end();
+		  ++ s ) {
+		if ( *s == &suite )
+		    throw std::logic_error( std::string( "Recursive test invocation" ));
+	    }
+	    seen.push_back( &suite );
+	    
+	    statuscounters	before	= m_stats;
+	    traverse( suite );
+
+	    seen.pop_back();
+	    return ( m_stats.failures() 	== before.failures()
+		     && m_stats.unknowns()	== before.unknowns() );
+	}
+
+	virtual bool		run(
+				    const std::string   name,
+				    test	       &suite 	= cut::root )
+	{
+	    // Starting with the given suite...
+	    std::stack<test*>		stk;
+	    stk.push( &suite );
+
+	    // Search for the named suite, within the given heirarchy.
+	    while ( stk.size() ) {
+		// Is it the suite on the top of the stack?  If so,
+		// run it and quit.
+		test	       *top;
+		top	= stk.top();
+		stk.pop();
+		if ( name == top->name() )
+		    return run( *top );
+
+		// Nope.  Replace this suite with all of its children
+		// (if any), and keep searching.  This does a
+		// depth-first search of the test suite tree.
+		std::vector<test*>     *kids;
+		kids 	= top->kids();
+		if ( kids )
+		    for ( std::vector<test*>::iterator 	k = kids->begin()
+			      ; k != kids->end()
+			      ; ++k )
+			stk.push( *k );
+	    }
+
+	    // Named test not found!  Fail.
+	    return false;
+	}
+
+				    // Return stats on run of suite
+	virtual statuscounters	stats()
+	{
+	    return m_stats;
+	}
+
+	// 
+	// Default output stream for use within cut::test methods.
+	// Override this method to provide tests with a different
+	// output stream (an ostringsream to collect the output
+	// of each test separately, for example.)  This allows
+	// interception of test output, for alternative output
+	// formats.
+	// 
+	// CUT( cut::test, OutputSomething, "Test Output" ) {
+	//     assert.out() << "Hello, World!" << std:endl;
+	// }
+	// 
+	// 
+	virtual std::ostream   &out()
+	{
+	    return m_out;
+	}
+
+	virtual void		addstatus(
+				    status	s )
+	{
+	    ++ m_stats.counts[s];
+	}
+
+	// 
+	// Return a static std::string with the current indent level.
+	// If the indent factor is zero, then emit no indent at all!
+	// 
+	virtual std::string 	indent(
+				    int		extra	= 0 )
+	{
+	    std::string	indentstring;
+
+	    indentstring.resize( m_level * m_indent + ( m_indent ? extra : 0 ), ' ' );
+
+	    return indentstring;
+	}
+
+	// 
+	// Called before and after run of suite's tests
+	// only. Override to provide support to alternative output
+	// formats.
+	// 
+	virtual void		pretest(
+				    test	       & )
+	{
+	    ;
+	}
+	virtual void		posttest(
+				    test	       & )
+	{
+	    ;
+	}
+
+ 	// 
+	// Called before and after run of suite and all sub-suites.  Prints
+	// a textual summary of the results of all assertions.
+	// Override to provide alternative output formats.
+	// 
+	virtual void		presuite(
+				    test	       & )
+	{
+	    ++ m_level;
+	    m_sparsestack.push( m_sparse );	// Save m_sparse in case its changed during suite
+	}
+	virtual void		sparse(
+				    bool 		setsparse = true )
+	{
+	    m_sparse	= setsparse;
+	}
+	virtual void		postsuite(
+				    test	       & )
+	{
+	    m_sparse	= m_sparsestack.top();	// Restore m_sparse to original setting
+	    m_sparsestack.pop();
+
+	    -- m_level;
+	    if ( m_level > 0 )
+		return;
+
+	    // Print summary after last test suite.
+	    out()          << std::setw( 9 ) << m_stats.total() 	<< std::setw( 0 ) << " TOTAL tests." << std::endl;
+	    if ( m_stats.total() > 0 ) {
+		out()      << std::setw( 9 ) << m_stats.successes() 	<< std::setw( 0 ) << " SUCCESSES (" 
+			   << std::setw( 3 ) << ( m_stats.successes() * 100 / m_stats.total() ) << "%)"
+			   << std::endl;
+
+		if ( m_stats.failures() ) {
+		    out()  << std::setw( 9 ) << m_stats.failures()  	<< std::setw( 0 ) << " FAILURES  (" 
+			   << std::setw( 3 ) << ( m_stats.failures() * 100 / m_stats.total() ) << "%)"
+			   << std::endl;
+		}
+
+		if ( m_stats.unknowns() ) {
+		    out()  << std::setw( 9 ) << m_stats.unknowns()  	<< std::setw( 0 ) << " UNKNOWNS  (" 
+			   << std::setw( 3 ) << ( m_stats.unknowns() * 100 / m_stats.total() ) << "%)"
+			   << std::endl;
+		}
+	    }
+	}
+
+	// 
+	// isfailed		-- test always fails
+	// isequal		-- test fails if operands not equal, optionally within delta
+	// 
+	//     Truth and Equality test macros, to include file location information.  Each macro
+	// returns true on a status of 'success', false on anything else ('failure' or 'unknown')
+	// 
+	// 
+	// EXAMPLE
+	// 
+	// // tests sqrt(2) == 1.4 +/- 0.1
+	// CUT( cut::test, AdditionTest, "Simple Addition Test" ) {
+	//     assert.ISEQUALDELTA( sqrt( 2 ), 1.4, 0.1 );
+	// }
+	// 
+#define	ISUNKNOWNTS(	     t, a,       s )	isequal( t, s, __FILE__, __LINE__, a )
+#define	ISUNKNOWNT( 	     t, a          )	ISUNKNOWNTS(     t, a, #a )
+#define	ISUNKNOWNS( 	        a,       s )	ISUNKNOWNTS( *this, a,  s )
+#define	ISUNKNOWN(  	        a          )	ISUNKNOWNTS( *this, a, #a )
+#define	ISTRUETS( 	     t, a,       s )	isequal( t, s, __FILE__, __LINE__, true,  a )
+#define	ISTRUET( 	     t, a          )	ISTRUETS(     t, a, #a )
+#define	ISTRUES( 	        a,       s )	ISTRUETS( *this, a,  s )
+#define	ISTRUE( 	        a          )	ISTRUETS( *this, a, #a )
+#define	ISFALSETS( 	     t, a,       s )	isequal( t, s, __FILE__, __LINE__, false, a )
+#define	ISFALSET( 	     t, a          )	ISFALSETS(     t, a, #a )
+#define	ISFALSES( 	        a,       s )	ISFALSETS( *this, a, s )
+#define	ISFALSE( 	        a          )	ISFALSETS( *this, a, #a )
+#define	ISEQUALTS(           t, a, e,    s )	isequal( t, s, __FILE__, __LINE__, true,  a, e )
+#define	ISEQUALT(            t, a, e       )	ISEQUALTS(     t, a, e, #a )
+#define	ISEQUALS(               a, e,    s )	ISEQUALTS( *this, a, e,  s )
+#define	ISEQUAL( 	        a, e       )	ISEQUALTS( *this, a, e, #a )
+#define	ISNOTEQUALTS(        t, a, e,    s )	isequal( t, s, __FILE__, __LINE__, false, a, e )
+#define	ISNOTEQUALT( 	     t, a, e       )	ISNOTEQUALTS(     t, a, e, #a )
+#define	ISNOTEQUALS( 	        a, e,    s )	ISNOTEQUALTS( *this, a, e,  s )
+#define	ISNOTEQUAL( 	        a, e       )	ISNOTEQUALTS( *this, a, e, #a )
+#define	ISEQUALDELTATS(      t, a, e, d, s )	isequal( t, s, __FILE__, __LINE__, true,  a, e, d )
+#define	ISEQUALDELTAT(       t, a, e, d    )	ISEQUALDELTATS(     t, a, e, d, #a )
+#define	ISEQUALDELTAS(          a, e, d, s )	ISEQUALDELTATS( *this, a, e, d, s  )
+#define	ISEQUALDELTA(           a, e, d    )	ISEQUALDELTATS( *this, a, e, d, #a )
+#define	ISEQUALPERCENTTS(    t, a, e, p, s )	isequal( t, s, __FILE__, __LINE__, true,  a, e, p, true )
+#define	ISEQUALPERCENTT(     t, a, e, p    )	ISEQUALPERCENTTS(     t, a, e, p, #a )
+#define	ISEQUALPERCENTS(        a, e, p, s )	ISEQUALPERCENTTS( *this, a, e, p,  s )
+#define	ISEQUALPERCENT(         a, e, p    )	ISEQUALPERCENTTS( *this, a, e, p, #a )
+#define	ISNOTEQUALDELTATS(   t, a, e, d, s )	isequal( t, s, __FILE__, __LINE__, false, a, e, d )
+#define	ISNOTEQUALDELTAT(    t, a, e, d    )	ISNOTEQUALDELTATS(     t, a, e, d, #a )
+#define	ISNOTEQUALDELTAS(       a, e, d, s )	ISNOTEQUALDELTATS( *this, a, e, d, s  )
+#define	ISNOTEQUALDELTA(        a, e, d    )	ISNOTEQUALDELTATS( *this, a, e, d, #a )
+#define	ISNOTEQUALPERCENTTS( t, a, e, p, s )	isequal( t, s, __FILE__, __LINE__, false, a, e, p, true )
+#define	ISNOTEQUALPERCENTT(  t, a, e, p )	ISNOTEQUALPERCENTTS(     t, a, e, p, #a )
+#define	ISNOTEQUALPERCENTS(     a, e, p, s )	ISNOTEQUALPERCENTTS( *this, a, e, p, s  )
+#define	ISNOTEQUALPERCENT(      a, e, p    )	ISNOTEQUALPERCENTTS( *this, a, e, p, #a )
+#define	ISFAILEDT(             t, a, e       )	isfailed( t, __FILE__, __LINE__, a, e )
+#define	ISFAILED(                 a, e       )	ISFAILEDT( *this, a, e )
+
+	// 
+	// isfailed			-- report what actually happened, and what was expected.
+	// 
+	//     A failure was detected.  State what actually happened, and then what you expected
+	// to have happen.  If (const char *) are provided, they are tested for NULL before use (in
+	// overloaded method isequalstatus)
+	// 
+	bool 			isfailed(
+				    test	       &t,
+				    const char	       *file,
+				    int			line,
+				    const char	       *actual,
+				    const char	       *expected )
+	{
+	    addstatus( failure );
+	    isequalstatus( failure, t, "failure detected", file, line, true, actual, expected );
+
+	    return false;
+	}
+	bool 			isfailed(
+				    test	       &t,
+				    const char	       *file,
+				    int			line,
+				    const std::string  &actual,
+				    const std::string  &expected )
+	{
+	    addstatus( failure );
+	    isequalstatus( failure, t, "failure detected", file, line, true, actual, expected );
+
+	    return false;
+	}
+
+	// 
+	// isequal( ..., T )		-- 'actual' only, no 'expected' value; test is 'unknown'
+	// 
+	// 
+	// Assert value is equal to as yet unknown value.  This
+	// method is used to specify tests where no expected result
+	// is yet known (review results of test run and fix tests)
+	// 
+	bool 			isequal(
+				    test	       &t,
+				    const char 	       *description,
+				    const char	       *file,
+				    int			line,
+				    double		actual )
+	{
+	    addstatus( unknown );
+	    isequalstatus( unknown, t, description, file, line, true, actual );
+
+	    return false;
+	}
+
+	//
+	// isequal( ..., bool, bool )	-- simple boolean inequality; test is 'failure' or 'success'
+	// 
+	// Boolean equality.  Uses the (const char *) version of
+	// isequalstatus(), so that the truth values appear as names,
+	// not numbers.
+	// 
+	bool	 		isequal(
+				    test	       &t,
+				    const char 	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    bool		actual )
+	{
+	    status		result;
+
+	    if ( truth
+		 == actual ) {
+		result	= success;
+	    } else {
+		result	= failure;
+	    }
+
+	    addstatus( result );
+	    isequalstatus( result, t, description, file, line, true,
+			   ( actual 	? "true" : "false" ),
+			   ( truth	? "true" : "false" ));
+
+	    return ( result == success );
+	}
+
+	// 
+	// isequal( ..., char*, char* )	-- simple C string inequality; test is 'failure' or 'success'
+	// isequal( ..., const std::string&, const std::string& )
+	// 
+	//     Assert character values are matching.  A char * 'expected' may be NULL, if value is
+	// unknown.
+	// 
+	bool	 		isequal(
+				    test	       &t,
+				    const char 	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    const char	       *actual,
+				    const char	       *expected )
+	{
+	    status		result;
+	    if ( expected != 0 ) {
+		result 	= (( truth
+			     == ( actual == expected			// same string, or both NULL
+				  || ( expected != 0 && actual != 0 	//   or, not NULL
+				       && ( strcmp( actual, expected )	//     and matching
+					    == 0 ))))
+			    ? success
+			    : failure );
+	    } else {
+		result	= unknown;
+	    }
+	    addstatus( result );
+	    isequalstatus( result, t, description, file, line, truth, actual, expected );
+
+	    return ( result == success );
+	}
+
+	// 
+	// isequal( ..., T*, T* )	-- simple pointer inequality; test is 'failure' or 'success'
+	// 
+	//     Assert pointers are matching.  A T * 'expected' may be 0, if value is unknown.
+	// 
+	template <typename T>
+	bool	 		isequal(
+				    test	       &t,
+				    const char 	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    const T    * const &actual,
+				    const T    * const &expected )
+	{
+	    status		result;
+	    if ( expected != 0 ) {
+		result 	= (( truth
+			     == ( actual == expected ))			// same value, or both 0
+			    ? success
+			    : failure );
+	    } else {
+		result	= unknown;
+	    }
+	    addstatus( result );
+	    isequalstatus( result, t, description, file, line, truth, actual, expected );
+
+	    return ( result == success );
+	}
+
+	bool	 		isequal(
+				    test	       &t,
+				    const char 	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    const std::string  &actual,
+				    const std::string  &expected )
+	{
+	    status		result	= (( truth
+					     == ( actual == expected ))
+					   ? success
+					   : failure );
+
+	    addstatus( result );
+	    isequalstatus( result, t, description, file, line, truth, actual, expected );
+
+	    return ( result == success );
+	}
+
+	// 
+	// isequal( ..., T, T )		-- T inequality via operator<
+	// 
+	//     Assert all other exact numeric or boolean equalities.  Test occurs in NATIVE type
+	// using operator< for inequality; assertion isequalstatus method casts values to 'double'
+	// or 'std::string' for logging output only.  Type T must have <, and be convertible to
+	// double or std::string.
+	// 
+	template<class T>
+	bool	 		isequal(
+				    test	       &t,
+				    const char 	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    const T	       &actual,
+				    const T 	       &expected )
+	{
+	    status		result;
+
+	    if ( truth
+		 == ( ! ( actual < expected || expected < actual ))) {
+		result	= success;
+	    } else {
+		result	= failure;
+	    }
+
+	    addstatus( result );
+	    isequalstatus( result, t, description, file, line, truth,
+			   actual, expected );
+
+	    return ( result == success );
+	}
+
+	// 
+	// isequal( ..., T, T, delta )	-- T inequality via operator<, delta via operator-
+	// 
+	//     Assert all other numeric-capable types are equal, within +/- delta (possibly stated
+	// as a percentage of the expected value).  Comparison takes place in native type.  Type T
+	// must have -, *, /, -'ve, <, and <=, plus be convertible to double or std::string.
+	// 
+	template<class T>
+	bool	 		isequal(
+				    test	       &t,
+				    const char 	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    const T	       &actual,
+				    const T	       &expected,
+				    T			delta,
+				    bool		percentage	= false )
+	{
+	    status		result;
+	    T			difference;
+
+	    difference	= ( actual < expected
+			    ? T( expected	- actual )
+			    : T( actual		- expected ));
+	    if ( percentage )
+	        delta  	= T( delta * expected / 100 );
+
+	    // Use <= vs. <, to avoid warning about unsigned types always failing test
+	    if ( delta <= T( 0 ))
+	        delta	= T( -delta );
+		
+	    if ( truth
+		 == ! ( delta < difference )) {
+		result	= success;
+	    } else {
+		result	= failure;
+	    }
+
+	    addstatus( result );
+
+	    // Converts T to double or std::string for output
+	    isequalstatus( result, t, description, file, line, truth,
+			   actual, expected, delta );
+
+	    return ( result == success );
+	}
+
+	// 
+	// Override to change output status of equality test.  All isequal(...)  methods use this
+	// method to report their results (casting their arguments to double).  The long long
+        // integer types may contain values that are truncated in extreme cases, so there may be
+        // warnings generated.
+	//
+	// Default behaviour reports unknown and failure in C error format (compatible with emacs
+	// compilation error parsing):
+	// 
+	// "\n(file.C:line) ... details ..."
+	//
+	// Successful tests (if not suppressed) are emitted in a similar format, but one NOT
+	// parsable by the emacs compilation error handling:
+	// 
+	// "\n(file.C;line) ... details ..."
+	// 
+	// May be invoked with a status argument indicating:
+	//
+	// success  -- the actual was tested as equal to expected (within +/- delta, if != 0)
+	// unknown  -- no expected has yet been supplied
+	// failure  -- actual tested not equal to expected.
+	// 
+	virtual void		isequalstatus(
+				    status		s,
+				    test	       &t,
+				    const char	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    double		actual,
+				    double		expected	= 0,
+				    double		delta		= 0 )
+	{
+	    if ( m_sparse == true && s == success )
+		return;
+
+	    std::ostream       &stream	= out();
+	    std::ios_base::fmtflags	
+				flg	= stream.flags();
+	    stream << '(' << file << ( s == success ? ';' : ':' ) << std::setw(4) << std::right << line << "): " 
+		   << std::setw(7) << statusname(s) << ": "
+		   << t.name() << ": \""
+		   << description << "\" "
+		   << ( truth ? " == " : " != " )
+		   << expected;
+	    if ( delta > 0 || delta < 0 ) {		// picky; avoids != comparison warning w/floats, but exact 0 doesn't match...
+		stream  << " (+/-"  << delta;
+		if ( expected > 0 || expected < 0 )
+		    stream << " == " 
+			   << ((( delta < 0 ) != ( expected < 0 ))
+			       ? -delta
+			       : delta ) * 100 / expected
+			   << '%';
+		stream << ')';
+	    }
+	    stream << ", actual: " << actual;
+	    if ( delta > 0 || delta < 0 ) {
+		double		difference	= actual - expected;
+		stream  << ( difference < 0 ? " (-" : " (+" ) 
+			<< ( difference < 0 ? -difference : difference );
+		if ( expected > 0 || expected < 0 )
+		    stream << ( difference < 0 ? " == -" : " == +" )
+			   << ((( difference < 0 ) != ( expected < 0 ))		// boolean XOR
+			       ? -difference
+			       : difference ) * 100 / expected
+			   << '%';
+		stream << ')';
+	    }
+	    stream << std::endl;
+	    stream.flags( flg );
+	}
+
+	virtual void		isequalstatus(
+				    status		s,
+				    test	       &t,
+				    const char	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    const std::string  &actual,
+				    const std::string  &expected )
+	{
+	    if ( m_sparse == true && s == success )
+		return;
+
+	    std::ostream       &stream	= out();
+	    std::ios_base::fmtflags	
+				flg	= stream.flags();
+	    stream << '(' << file << ( s == success ? ';' : ':' ) << std::setw(4) << std::right << line << "): " 
+		   << std::setw(7) << statusname(s) << ": "
+		   << t.name() << ": \""
+		   << description << "\" "
+		   << ( truth ? " == \"" : " != \"" ) << expected << "\""
+		   << ", actual: \"" << actual << "\""
+		   << std::endl;
+	    stream.flags( flg );
+	}
+
+	virtual void		isequalstatus(
+				    status		s,
+				    test	       &t,
+				    const char	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    const char	       *actual,
+				    const char	       *expected )
+	{
+	    if ( m_sparse == true && s == success )
+		return;
+
+	    isequalstatus( s, t, description, file, line, truth, 
+			   std::string( actual   ? actual   : "(NULL)" ),
+			   std::string( expected ? expected : "(NULL)" ));
+	}
+
+	virtual void		isequalstatus(
+				    status		s,
+				    test	       &t,
+				    const char	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    const void	* const actual,
+				    const void	* const expected )
+	{
+	    if ( m_sparse == true && s == success )
+		return;
+	    std::ostringstream	act, exp;
+	    act << actual;
+	    exp << expected;
+	    isequalstatus( s, t, description, file, line, truth, 
+			   act.str(), exp.str() );
+	}
+
+	virtual void		throwsexceptionstatus(
+				    status		s,
+				    test	       &t,
+				    const char	       *actual,
+				    const char	       *expected )
+	{
+	    if ( m_sparse == true && s == success )
+		return;
+
+	    std::ostream       &stream	= out();
+	    std::ios_base::fmtflags	
+				flg	= stream.flags();
+	    stream << '(' << t.file() << ( s == success ? ';' : ':' ) << std::setw(4) << std::right << t.line() << "): " 
+		   << std::setw(7) << statusname(s) << ": "
+		   << t.name() << ": "
+		   << expected
+		   << ", actual: " << actual
+		   << std::endl;
+	    stream.flags( flg );
+	}
+    };
+
+
+    inline void
+    test::trap(
+	class runner           &assert )
+    {
+	try {
+	    run( assert );
+	} catch ( std::exception &e ) {
+	    assert.addstatus( failure );
+	    assert.throwsexceptionstatus( failure, *this, ( std::string() + "Caught std::exception: " + e.what() ).c_str(), "no exception" );
+	} catch ( ... ) {
+	    assert.addstatus( failure );
+	    assert.throwsexceptionstatus( failure, *this, "Caught unknown exception", "no exception" );
+	}
+    }
+
+    template<class S, class E>
+    inline void
+    exctest<S,E>::trap(
+	class runner           &assert )
+    {
+	try {
+	    run( assert );
+	    assert.addstatus( failure );
+	    assert.throwsexceptionstatus( failure, *this, "No exception thrown!", m_excname );
+	} catch ( E ) {
+	    assert.addstatus( success );
+	    assert.throwsexceptionstatus( success, *this, "Caught correct exception.", m_excname );
+	} catch ( std::exception &e ) {
+	    assert.addstatus( failure );
+	    assert.throwsexceptionstatus( failure, *this, ( std::string() + "Caught std::exception: " + e.what() ).c_str(), "no exception" );
+	} catch ( ... ) {
+	    assert.addstatus( failure );
+	    assert.throwsexceptionstatus( failure, *this, "Caught unknown exception!", m_excname );
+	}
+    }
+
+    // Output test results to HTML
+    // 
+    // Outputs a single flat HTML table (the default).
+    // Alternatively, can output heirarchical table of suite and test
+    // results.
+    // 
+    class htmlrunner 
+	: public runner {
+    private:
+
+	// Stacks to collect test output, and to collect all the
+	// HTML output by sub-tests
+	std::stack<std::ostringstream*>	outstack;	// test suite output collectors
+	std::stack<std::ostringstream*>	htmstack;	// sub-suite HTML collectors
+	std::stack<std::streambuf*>	scbstack;	// parent test's std::cout buffers
+	std::stack<statuscounters>	stsstack;	// remember m_stats at start of suite
+
+	bool				m_flat;		// emit all suites in a single table
+	bool				m_cgi;		// true iff running as CGI; emit MIME header
+	bool				m_redirect;	// true iff redirecting std::cout
+
+    public:
+
+				htmlrunner(
+				       std::ostream    &outstream,
+				       bool		setsparse= true,// elide successful tests
+				       bool		flat	= true,	// don't do heirarchical tables
+				       bool		cgi	= true,	// emit Content-type: text/html header
+				       bool		redirect= true, // redirect std::cout to HTML
+				       int		indented= 0 )	// tight HTML
+				    : runner( outstream, setsparse )
+				      , m_flat( flat )
+				      , m_cgi( cgi )
+				      , m_redirect( redirect )
+	{
+	    m_indent	= indented;
+	}
+	virtual		       ~htmlrunner()
+	{
+	    ;
+	}
+
+	// Run a suite with HTML output.  If we detect we are running
+	// the root suite, we need to handle CGI framing, and setup of
+	// HTML output and suite output stacks.  Inherit all of our
+	// base class' 'run' methods, and then override the one that
+	// does the work/output.
+	using		runner::run;
+	virtual bool		run(
+	       			    test	       &suite	= cut::root )
+	{
+
+	    if ( m_level == 0 ) {
+		if ( m_cgi ) {
+		    m_out << "Content-Type: text/html; charset=iso-8859-1" 	<< std::endl
+			  << std::endl;
+		}
+
+		m_out << "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">" << std::endl
+		      << "<HTML>" << std::endl
+		      << "<HEAD>" << std::endl
+		      << "<TITLE>" << suite.name() << "</TITLE>" << std::endl
+		      << "<STYLE TYPE=\"text/css\">" << std::endl
+		      << "<!--" << std::endl
+		      << "I        { font-size:75% }"			<< std::endl
+		      << "PRE      { font-size:75%}" 			<< std::endl
+		      << ".FAILED  { background-color: #FF8080 }"	<< std::endl
+		      << ".UNKNOWN { background-color: #FFFF80 }"	<< std::endl
+		      << ".SUCCESS { background-color: #80FF80 }"	<< std::endl
+		      << "-->" << std::endl
+		      << "</STYLE>" << std::endl
+		      << "</HEAD>" << std::endl
+		      << "<BODY>" << std::endl;
+
+		time_t		curtime = time( 0 );
+		m_out << "<P>Testing starting: " << asctime( localtime( &curtime )) << "<BR></P>" << std::endl;
+
+		// All lower level tests collect their HTML into their
+		// parent's htmstack entry; so, there root test must have
+		// an extra one below it.
+		htmstack.push( new std::ostringstream );
+	    }
+
+	    bool		result	= runner::run( suite );
+
+	    if ( m_level == 0 ) {
+		time_t		curtime = time( 0 );
+		m_out 
+		    << htmstack.top()->str()
+		    << "<P>Testing complete: " << asctime( localtime( &curtime )) << "<BR></P>" << std::endl
+		    << "</BODY>" << std::endl
+		    << "</HTML>" << std::endl;
+
+		delete htmstack.top(); htmstack.pop();
+	    }
+
+	    return result;
+	}
+
+	// 
+	// Provide the test with the output ostringstream at the top
+	// of the stack, to collect the test method's output.
+	// 
+	virtual std::ostream   &out()
+	{
+	    return *outstack.top();
+	}
+
+	// 
+	// Test is about to run.  Collect this tests run() output for
+	// use later, when contructing the HTML table.  We'll use a
+	// stack of ostringstreams.
+	// 
+	virtual void		presuite(
+				    test       & )
+	{
+	    // Create output collectors for use by suite's tests and
+	    // sub-suites
+	    outstack.push( new std::ostringstream );
+	    htmstack.push( new std::ostringstream );
+
+	    // Take a copy of the current status counters, to see what
+	    // happens during the suite.
+	    stsstack.push( m_stats );
+	    ++ m_level;
+
+	    if ( m_redirect ) {
+		// Save and redirect std::cout to the output collector
+		// stream's buffer, to collect normal program output.
+		scbstack.push( std::cout.rdbuf() );
+		std::cout.rdbuf( outstack.top()->rdbuf() );
+	    }
+
+	    m_sparsestack.push( m_sparse );	// Save m_sparse
+	}
+
+	// 
+	// Test done; finish up table using the suite stats. Generate
+	// this test's HTML <TABLE>, append all the sub-tests HTML to
+	// it, and terminate the table.
+	// 
+	// Every row consists of 9 <TD> elements; 1 along the left containing
+	// the parent suite's status color, and 8 containing the test data.
+	// 
+	virtual void		postsuite(
+				    test       &suite )
+	{
+	    m_sparse	= m_sparsestack.top();	// Restore m_sparse
+	    m_sparsestack.pop();
+
+	    if ( m_redirect ) {
+		// Restore std::cout's prior output buffer (we're
+		// about to delete the one it's been going into...)
+		std::cout.rdbuf( scbstack.top() );
+		scbstack.pop();
+	    }
+
+	    // First, pop off all of the sub-test's HTML, so we can
+	    // get to our parent's HTML stack
+	    std::unique_ptr<std::ostringstream>	subhtm( htmstack.top() );
+	    htmstack.pop();
+
+	    // Figure out our overall status.  If any non-success
+	    // counter's increased, this suite's status reflects the
+	    // worst of the sub-suite's statuses!
+	    status 		suitestatus = (( m_stats.counts[failure] > stsstack.top().counts[failure] )
+					       ? failure
+					       : (( m_stats.counts[unknown] >  stsstack.top().counts[unknown] )
+						  ? unknown
+						  : success ));
+
+	    // If we are within another suite (m_level > 1), then we
+	    // have to behave as a single "test" row within it's
+	    // table!  So, we are about to emit a table; make it
+	    // appear as an element that spans the last 7 elements of
+	    // the parent's table (so the parent's status color
+	    // appears along the left edge)
+	    if ( ! m_flat ) {
+		if ( m_level > 1 ) {
+		    *htmstack.top()
+		    << indent(0) << "<TR>" << std::endl
+		    << indent(2) <<   "<TD>&nbsp;</TD>" << std::endl
+		    << indent(2) <<   "<TD colspan=6>" << std::endl;
+		}
+		*htmstack.top()
+		    << indent(4) <<     "<TABLE>" << std::endl;
+	    } else {
+		// Generate a single flat table, containing all suite
+		// summaries, and all test cases.  The left hand
+		// column will show contain the overall test status,
+		// each suite summary will show that suite's status,
+		// and the remainder of each test will show its own
+		// status.  Only one <TABLE> is generated.
+		if ( m_level == 1 ) {
+		    *htmstack.top()
+		    << indent(4) <<     "<TABLE>" << std::endl;
+		}
+	    }
+
+	    // Create a header row
+	    if (( m_flat == true 		// we're doing "flat" HTML and this is the root suite
+		  && m_level == 1 )
+		|| ( m_flat == false )) {	// or were doing heirarchical HTML, and every table needs one
+		*htmstack.top()
+		    << indent(6) <<       "<TR VALIGN=BOTTOM><TH>&nbsp;</TH>"
+		                 <<       "<TH>Suite<BR><I>File</I></TH>"
+	   	                 <<       "<TH>&nbsp;<BR><I>Line</I></TH>"
+		                 <<       "<TH>SUCCESSFUL<BR><I>Test</I></TH>"
+		                 <<       "<TH>UNKNOWN<BR><I>Expected</I></TH>"
+		                 <<       "<TH>FAILED<BR><I>Actual</I></TH>"
+		                 <<       "<TH><I>Output</I></TH></TR>" << std::endl;
+	    }
+
+	    if ( m_level	== 1		// this is the "root" suite
+		 || m_flat	== false	//   or, we aren't doing flat HTML
+		 || m_sparse	== false	//   or, we aren't eliding successful test
+		 || suitestatus	!= success ) {	//   or, something evil happened during this test
+		// Now, create the HTML row for the suite stats summary,
+		// in the background color appropriate for our worst-case
+		// sub-test, and append it to our parent's HTML collector.
+		int		sui	= m_stats.suites - stsstack.top().suites;
+		int		tot 	= m_stats.total() - stsstack.top().total();
+		int		suc	= m_stats.successes() - stsstack.top().successes();
+		int		unk	= m_stats.unknowns() - stsstack.top().unknowns();
+		int		fal	= m_stats.failures() - stsstack.top().failures();
+		*htmstack.top()
+		    << indent(6) <<       "<TR CLASS=\"" << statusname( suitestatus ) << "\">" << std::endl
+		    << indent(8) <<         "<TD colspan=3>" << std::endl
+		    << indent(10) <<          suite.name()
+		    << indent(8) <<         "</TD>" << std::endl;
+		if ( suc ) {
+		    *htmstack.top()
+			<< indent(8) <<         "<TD>" << suc << " (" << ( tot ? ( suc * 100 / tot ) : 0 ) << "%)</TD>" << std::endl;
+		} else {
+		    *htmstack.top()
+			<< indent(8) <<         "<TD></TD>" << std::endl;
+		}
+		if ( unk ) {
+		    *htmstack.top()
+			<< indent(8) <<         "<TD>" << unk << " (" << ( tot ? ( unk * 100 / tot ) : 0 ) << "%)</TD>" << std::endl;
+		} else {
+		    *htmstack.top()
+			<< indent(8) <<         "<TD></TD>" << std::endl;
+		}
+		if ( fal ) {
+		    *htmstack.top()
+			<< indent(8) <<         "<TD>"  << fal << " (" << ( tot ? ( fal * 100 / tot ) : 0 ) << "%)</TD>" << std::endl;
+		} else {
+		    *htmstack.top()
+			<< indent(8) <<         "<TD></TD>" << std::endl;
+		}
+		*htmstack.top()
+		    << indent(8) <<         "<TD>"   << tot << " tests in " << sui << " suite" << ( sui == 1 ? "" : "s" ) << "</TD>" << std::endl
+		    << indent(6) <<       "</TR>" << std::endl;
+
+
+		// Finally, include any HTML generated by the suite's test case and any sub-suites.
+		*htmstack.top()
+		    << indent() << subhtm->str();
+	    }
+
+	    // Terminate the row/table
+	    if ( ! m_flat ) {
+		*htmstack.top()
+		    << indent(4) <<     "</TABLE>" << std::endl;
+		if ( m_level > 1 ) {
+		    *htmstack.top()
+			<< indent(2) <<   "</TD>" << std::endl
+			<< indent(0) << "</TR>" << std::endl;
+		}
+	    } else {
+		if ( m_level == 1 ) {
+		    *htmstack.top()
+			<< indent(4) <<     "</TABLE>" << std::endl;
+		}
+	    }
+
+	    // Drop down a level, and get rid of this suite's output ostringstream (this only
+	    // contains the remainder of the suite's output following the last test.)
+	    -- m_level;
+	    stsstack.pop();
+	    delete outstack.top(); outstack.pop();
+	}
+
+	// 
+	// Output a <TD bgcolor="#XXXXXX"> tag appropriate for the given status
+	// 
+	std::string             tdsts(
+				    status		s )
+	{
+	    std::string		tdstring;
+
+	    tdstring	= indent(2);
+	    tdstring   += "<TD CLASS=\"";
+	    tdstring   += statusname( s );
+	    tdstring   += "\">";
+
+	    return tdstring;
+	}
+
+	// 
+	// Output an equality test status as 7 HTML table row <TD> elements.
+	// 
+	// +----------------------------------------------------------------------+
+	// |&nbsp|file|line|test expression|expected(+/- delta)|actual|test-output|
+	// +----------------------------------------------------------------------+
+	// 
+	// The first element one takes on the background color specified for the table or row.
+	// The remainder have a background color specified, illustrating the status of the
+	// individual test.
+	//  
+	using 		runner::isequalstatus;			// don't hide any non-overridden members...
+	virtual void		isequalstatus(
+				    status		s,
+				    test	       &,
+				    const char	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    double		actual,
+				    double		expected	= 0,
+				    double		delta		= 0 )
+	{
+	    std::unique_ptr<std::ostringstream>	outstream( outstack.top() );
+	    outstack.pop();
+	    outstack.push( new std::ostringstream );
+	    if ( m_redirect ) 
+		std::cout.rdbuf( outstack.top()->rdbuf() );	// we're redirecting; hook std::cout up to our fresh new ostringstream
+
+	    // 
+	    // Elide successful tests, if specified
+	    // 
+	    if ( m_sparse == true && s == success )
+		return;
+
+	    *htmstack.top()
+		    << indent(0) << "<TR VALIGN=TOP>"			       << std::endl
+		    << indent(2) <<   "<TD>"   << "&nbsp;" 	<< "</TD>"     << std::endl
+		    << tdsts(s)  <<    "<I>"   << file         	<< "</I></TD>" << std::endl
+		    << tdsts(s)  <<    "<I>"   << line 		<< "</I></TD>" << std::endl
+		    << tdsts(s)  <<    "<PRE>" << description 	<< "</PRE></TD>" << std::endl
+		    << tdsts(s)  <<    "<PRE>" << ( truth ? " == " : " != " )
+		    << expected;
+		if ( delta > 0 || delta < 0 ) {
+		    *htmstack.top()	       << "(+/- " << delta << ")";
+		}
+		*htmstack.top()					<< "</PRE></TD>" << std::endl
+		    << tdsts(s)  <<    "<PRE>" << actual 	<< "</PRE></TD>" << std::endl;
+
+	    // Collect up and output the test suite output emitted so
+	    // far; it provides context to this test.
+	    *htmstack.top()
+		<< indent(2)    <<   "<TD>"		     		       << std::endl
+		<< "<PRE>"      << outstream->str() 		<< "</PRE>"    << std::endl
+		<< indent(2)    <<   "</TD>" 				       << std::endl
+		<< indent(0)    << "</TR>" 				       << std::endl;
+	}
+
+	virtual void		isequalstatus(
+				    status		s,
+				    test	       &,
+				    const char	       *description,
+				    const char	       *file,
+				    int			line,
+				    bool		truth,
+				    const std::string  &actual,
+				    const std::string  &expected )
+	{
+	    // 
+	    // Elide successful tests, if specified.  We must still
+	    // refresh the output and html stack stuff.  Replace the
+	    // outstack.top() ostringstream with a fresh one, to
+	    // collect future test output for later rows.
+	    // 
+	    std::unique_ptr<std::ostringstream>	outstream( outstack.top() );
+	    outstack.pop();
+	    outstack.push( new std::ostringstream );
+	    if ( m_redirect ) 
+		std::cout.rdbuf( outstack.top()->rdbuf() );
+
+	    if ( m_sparse == true && s == success  )
+		return;
+
+		// not sparse, or not successful; output test results.
+	    *htmstack.top()
+		    << indent(0) << "<TR VALIGN=TOP>"			       		<< std::endl
+		    << indent(2) <<   "<TD>"   << "&nbsp;" 	<< "</TD>"     		<< std::endl
+		    << tdsts(s)  <<    "<I>"   << file      	<< "</I></TD>" 		<< std::endl
+		    << tdsts(s)  <<    "<I>"   << line 		<< "</I></TD>" 		<< std::endl
+		    << tdsts(s)  <<    "<PRE>" << description	<< "</PRE></TD>"	<< std::endl
+		    << tdsts(s)  <<    "<PRE>" << ( truth ? " == " : " != " )
+					       << expected	<< "</PRE></TD>"	<< std::endl
+		    << tdsts(s)  <<    "<PRE>" << actual 	<< "</PRE></TD>"	<< std::endl
+		    << indent(2) << "<TD><PRE>"<< outstream->str()<< "</PRE></TD>"     	<< std::endl
+		    << indent(0) << "</TR>" 				       		<< std::endl;
+	}
+
+	virtual void		throwsexceptionstatus(
+				    status		s,
+				    test	       &t,
+				    const char	       *actual,
+				    const char	       *expected )
+	{
+	    std::unique_ptr<std::ostringstream>	outstream( outstack.top() );	// auto-delete on return
+	    outstack.pop();
+	    outstack.push( new std::ostringstream );
+	    if ( m_redirect ) 
+		std::cout.rdbuf( outstack.top()->rdbuf() );
+	    
+	    if ( m_sparse && s == success )
+		return;
+
+	    *htmstack.top()
+		    << indent(0) << "<TR VALIGN=TOP>"			         << std::endl
+		    << indent(2) <<   "<TD>"   << "&nbsp;" 	<< "</TD>"       << std::endl
+		    << tdsts(s)  <<    "<I>"   << t.file()     	<< "</I></TD>"   << std::endl
+		    << tdsts(s)  <<    "<I>"   << t.line()	<< "</I></TD>"   << std::endl
+		    << tdsts(s)  <<    "<I>"   << t.name() 	<< "</I></TD>"   << std::endl
+		    << tdsts(s)  <<    "<PRE>" << actual	<< "</PRE></TD>" << std::endl
+		    << tdsts(s)  <<    "<PRE>" << expected	<< "</PRE></TD>" << std::endl;
+
+	    // Collect up and output the test suite output emitted so
+	    // far; it provides context to this test.
+	    *htmstack.top()
+		<< indent(2)    <<   "<TD>"				       << std::endl
+	        << "<PRE>"      << outstream->str()  		<< "</PRE>"    << std::endl
+		<< indent(2)    <<   "</TD>" 				       << std::endl
+		<< indent(0)    << "</TR>" 				       << std::endl;
+	}
+    };
+} // namespace cut
+
+
+#endif // _INCLUDE_CUT_H

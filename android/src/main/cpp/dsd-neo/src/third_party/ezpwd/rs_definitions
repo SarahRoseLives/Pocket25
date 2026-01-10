@@ -1,0 +1,18 @@
+
+// 
+// The encoder/decoder tables for all ezpwd::rs codecs
+// 
+//     Must be included in exactly one C++ compilation unit.
+// 
+
+#ifndef _EZPWD_RS_DEFINITIONS
+#define _EZPWD_RS_DEFINITIONS
+
+#include "rs_base"
+
+const constexpr std::array<uint8_t,256>
+			ezpwd::reed_solomon_base::into_dual;
+const constexpr std::array<uint8_t,256>
+			ezpwd::reed_solomon_base::from_dual;
+
+#endif // _EZPWD_RS_DEFINITIONS

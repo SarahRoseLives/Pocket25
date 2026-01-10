@@ -1,0 +1,4 @@
+#define _GIT_TAG "@GIT_TAG@"
+#define _GIT_HASH "@GIT_HASH@"
+const char GIT_TAG[] = _GIT_TAG;
+const char GIT_HASH[] = _GIT_HASH;

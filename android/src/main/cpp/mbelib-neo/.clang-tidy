@@ -1,0 +1,21 @@
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  security-*,
+  readability-*,
+  -readability-identifier-length,
+  -readability-identifier-naming,
+  -readability-magic-numbers,
+  -readability-uppercase-literal-suffix,
+  -readability-isolate-declaration,
+  -readability-non-const-parameter,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions
+WarningsAsErrors: 'clang-analyzer-*,bugprone-*'
+HeaderFilterRegex: '^(src|include)/'
+FormatStyle: none
+CheckOptions:
+  - key: readability-function-cognitive-complexity.FunctionCognitiveComplexityThreshold
+    value: '80'

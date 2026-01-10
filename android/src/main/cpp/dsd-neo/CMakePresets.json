@@ -1,0 +1,251 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "dev-debug",
+      "displayName": "Dev Debug",
+      "description": "Debug build (export compile_commands.json)",
+      "binaryDir": "${sourceDir}/build/dev-debug",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "dev-release",
+      "displayName": "Dev Release",
+      "description": "Release build (LTO/fast-math enabled)",
+      "binaryDir": "${sourceDir}/build/dev-release",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "OFF",
+        "DSD_ENABLE_LTO": "ON",
+        "DSD_ENABLE_FAST_MATH": "ON"
+      }
+    },
+    {
+      "name": "asan-ubsan-debug",
+      "displayName": "Debug + ASan/UBSan",
+      "description": "Debug build with sanitizers enabled",
+      "binaryDir": "${sourceDir}/build/asan-ubsan-debug",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "DSD_ENABLE_ASAN": "ON",
+        "DSD_ENABLE_UBSAN": "ON"
+      }
+    },
+    {
+      "name": "coverage-debug",
+      "displayName": "Debug + Coverage",
+      "description": "Debug build with GCC/Clang coverage instrumentation",
+      "binaryDir": "${sourceDir}/build/coverage-debug",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_FLAGS": "--coverage -O0",
+        "CMAKE_CXX_FLAGS": "--coverage -O0",
+        "CMAKE_EXE_LINKER_FLAGS": "--coverage",
+        "CMAKE_SHARED_LINKER_FLAGS": "--coverage"
+      }
+    },
+    {
+      "name": "win-msvc-debug",
+      "displayName": "Windows MSVC Debug",
+      "description": "Windows Debug build with MSVC via vcpkg",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/win-msvc-debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-dynamic",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/vcpkg-triplets",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed"
+      }
+    },
+    {
+      "name": "win-msvc-release",
+      "displayName": "Windows MSVC Release",
+      "description": "Windows Release build with MSVC via vcpkg",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/win-msvc-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-dynamic-release",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/vcpkg-triplets",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+        "BUILD_TESTING": "OFF",
+        "DSD_ENABLE_LTO": "ON",
+        "DSD_ENABLE_FAST_MATH": "ON"
+      }
+    },
+    {
+      "name": "win-mingw-debug",
+      "displayName": "Windows MinGW Debug",
+      "description": "Windows Debug build with MinGW-w64",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/win-mingw-debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/vcpkg-triplets",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+        "VCPKG_APPLOCAL_DEPS": "OFF"
+      }
+    },
+    {
+      "name": "win-mingw-release",
+      "displayName": "Windows MinGW Release",
+      "description": "Windows Release build with MinGW-w64",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/win-mingw-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic-release",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/vcpkg-triplets",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
+        "VCPKG_APPLOCAL_DEPS": "OFF",
+        "BUILD_TESTING": "OFF",
+        "DSD_ENABLE_LTO": "ON",
+        "DSD_ENABLE_FAST_MATH": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dev-debug",
+      "configurePreset": "dev-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "dev-debug-clean",
+      "configurePreset": "dev-debug",
+      "configuration": "Debug",
+      "cleanFirst": true
+    },
+    {
+      "name": "dev-release",
+      "configurePreset": "dev-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "dev-release-clean",
+      "configurePreset": "dev-release",
+      "configuration": "Release",
+      "cleanFirst": true
+    },
+    {
+      "name": "asan-ubsan-debug",
+      "configurePreset": "asan-ubsan-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "asan-ubsan-debug-clean",
+      "configurePreset": "asan-ubsan-debug",
+      "configuration": "Debug",
+      "cleanFirst": true
+    },
+    {
+      "name": "coverage-debug",
+      "configurePreset": "coverage-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "coverage-debug-clean",
+      "configurePreset": "coverage-debug",
+      "configuration": "Debug",
+      "cleanFirst": true
+    },
+    {
+      "name": "win-msvc-debug",
+      "configurePreset": "win-msvc-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "win-msvc-release",
+      "configurePreset": "win-msvc-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "win-mingw-debug",
+      "configurePreset": "win-mingw-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "win-mingw-release",
+      "configurePreset": "win-mingw-release",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "dev-debug",
+      "configurePreset": "dev-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "dev-release",
+      "configurePreset": "dev-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "asan-ubsan-debug",
+      "configurePreset": "asan-ubsan-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "coverage-debug",
+      "configurePreset": "coverage-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "win-msvc-debug",
+      "configurePreset": "win-msvc-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "win-msvc-release",
+      "configurePreset": "win-msvc-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "win-mingw-debug",
+      "configurePreset": "win-mingw-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "win-mingw-release",
+      "configurePreset": "win-mingw-release",
+      "configuration": "Release"
+    }
+  ]
+}

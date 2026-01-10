@@ -1,0 +1,16 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Imported targets
+include("${CMAKE_CURRENT_LIST_DIR}/mbe-neoTargets.cmake")
+
+# Provide underscore-named aliases for convenience/compatibility
+if(NOT TARGET mbe_neo::mbe_shared AND TARGET mbe_neo::mbe-shared)
+  add_library(mbe_neo::mbe_shared ALIAS mbe_neo::mbe-shared)
+endif()
+if(NOT TARGET mbe_neo::mbe_static AND TARGET mbe_neo::mbe-static)
+  add_library(mbe_neo::mbe_static ALIAS mbe_neo::mbe-static)
+endif()
+
+check_required_components(mbe-neo)

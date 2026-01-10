@@ -1,0 +1,7 @@
+DSD-neo is distributed under the terms of the GNU General Public License v3.0 or later. See LICENSE for the full text.
+
+Legacy ISC-licensed portions from the original DSD author remain identified via SPDX headers in the source tree. These files are GPL-compatible and ship alongside GPL-3.0-or-later code.
+
+The D-STAR radio-header processing path (scrambler, interleaver, Viterbi decode, CRC) was rewritten in 2025 under GPL-3.0-or-later to replace prior GPL-2.0-only contributions.
+
+Third-party code retains its original notices in-place; notably, ezpwd Reed-Solomon contains GPL-3.0-or-later/LGPL components (see src/third_party/ezpwd/ and src/third_party/ezpwd/lesser.txt). Installed third-party license texts are shipped under share/doc/dsd-neo/licenses/. A summary of bundled third-party code lives in THIRD_PARTY.md.

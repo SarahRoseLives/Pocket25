@@ -1,0 +1,27 @@
+# Doxygen configuration for mbelib-neo
+PROJECT_NAME           = "mbelib-neo"
+PROJECT_BRIEF          = "IMBE/AMBE vocoder primitives"
+OUTPUT_DIRECTORY       = docs
+CREATE_SUBDIRS         = NO
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_PACKAGE        = NO
+EXTRACT_LOCAL_CLASSES  = YES
+OPTIMIZE_OUTPUT_FOR_C  = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_AS_ERROR          = NO
+JAVADOC_AUTOBRIEF      = YES
+WARN_LOGFILE           = 
+INPUT                  = README.md include src examples tests
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.c *.md
+EXCLUDE_PATTERNS       = */build/* */.git/*
+FULL_PATH_NAMES        = NO
+STRIP_FROM_PATH        = .
+INLINE_SOURCES         = NO
+SOURCE_BROWSER         = NO
+USE_MDFILE_AS_MAINPAGE = README.md
