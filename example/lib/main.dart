@@ -248,6 +248,9 @@ class _MainScreenState extends State<MainScreen> {
         selectedFontSize: 12,
         unselectedFontSize: 12,
         iconSize: 20,
+        type: BottomNavigationBarType.fixed,
+        showSelectedLabels: true,
+        showUnselectedLabels: true,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.radio),
