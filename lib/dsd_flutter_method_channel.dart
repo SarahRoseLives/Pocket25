@@ -15,8 +15,12 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
   /// The event channel for receiving structured call events.
   final _callEventChannel = const EventChannel('dsd_flutter/call_events');
   
+  /// The event channel for receiving site/system detail updates.
+  final _siteEventChannel = const EventChannel('dsd_flutter/site_events');
+  
   Stream<String>? _outputStream;
   Stream<Map<String, dynamic>>? _callEventStream;
+  Stream<Map<String, dynamic>>? _siteEventStream;
 
   @override
   Future<String?> getPlatformVersion() async {
@@ -64,5 +68,13 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
         .receiveBroadcastStream()
         .map((event) => Map<String, dynamic>.from(event as Map));
     return _callEventStream!;
+  }
+  
+  @override
+  Stream<Map<String, dynamic>> get siteEventStream {
+    _siteEventStream ??= _siteEventChannel
+        .receiveBroadcastStream()
+        .map((event) => Map<String, dynamic>.from(event as Map));
+    return _siteEventStream!;
   }
 }

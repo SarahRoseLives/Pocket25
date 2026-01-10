@@ -5,8 +5,10 @@ import 'package:dsd_flutter/dsd_flutter.dart';
 import 'screens/scanner_screen.dart';
 import 'screens/log_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/site_details_screen.dart';
 import 'services/settings_service.dart';
 import 'models/scanner_activity.dart';
+import 'models/site_details.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -57,10 +59,12 @@ class _MainScreenState extends State<MainScreen> {
   final ScrollController _logScrollController = ScrollController();
   
   CallEvent? _currentCall;
+  SiteDetails? _currentSiteDetails;
   bool _isRunning = false;
   int _currentIndex = 0;
   StreamSubscription<String>? _outputSubscription;
   StreamSubscription<Map<String, dynamic>>? _callEventSubscription;
+  StreamSubscription<Map<String, dynamic>>? _siteEventSubscription;
   Timer? _callTimeoutTimer;
 
   @override
@@ -68,6 +72,7 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     _listenToOutput();
     _listenToCallEvents();
+    _listenToSiteEvents();
     _startCallTimeoutTimer();
   }
 
@@ -75,6 +80,7 @@ class _MainScreenState extends State<MainScreen> {
   void dispose() {
     _outputSubscription?.cancel();
     _callEventSubscription?.cancel();
+    _siteEventSubscription?.cancel();
     _callTimeoutTimer?.cancel();
     _logScrollController.dispose();
     super.dispose();
@@ -134,6 +140,14 @@ class _MainScreenState extends State<MainScreen> {
             }
             break;
         }
+      });
+    });
+  }
+
+  void _listenToSiteEvents() {
+    _siteEventSubscription = _dsdFlutterPlugin.siteEventStream.listen((eventMap) {
+      setState(() {
+        _currentSiteDetails = SiteDetails.fromMap(eventMap);
       });
     });
   }
@@ -200,6 +214,10 @@ class _MainScreenState extends State<MainScreen> {
           scrollController: _logScrollController,
         );
       case 2:
+        return SiteDetailsScreen(
+          siteDetails: _currentSiteDetails,
+        );
+      case 3:
         return SettingsScreen(
           settings: _settingsService,
           dsdPlugin: _dsdFlutterPlugin,
@@ -238,6 +256,10 @@ class _MainScreenState extends State<MainScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.terminal),
             label: 'Log',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.cell_tower),
+            label: 'Site',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.settings),

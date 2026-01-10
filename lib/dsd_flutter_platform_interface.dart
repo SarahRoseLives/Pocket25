@@ -52,4 +52,9 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
   Stream<Map<String, dynamic>> get callEventStream {
     throw UnimplementedError('callEventStream has not been implemented.');
   }
+  
+  /// Stream of site/system detail updates from DSD
+  Stream<Map<String, dynamic>> get siteEventStream {
+    throw UnimplementedError('siteEventStream has not been implemented.');
+  }
 }

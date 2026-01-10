@@ -18,8 +18,10 @@ class DsdFlutterPlugin :
     private lateinit var channel: MethodChannel
     private lateinit var eventChannel: EventChannel
     private lateinit var callEventChannel: EventChannel
+    private lateinit var siteEventChannel: EventChannel
     private var eventSink: EventChannel.EventSink? = null
     private var callEventSink: EventChannel.EventSink? = null
+    private var siteEventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     companion object {
@@ -77,6 +79,29 @@ class DsdFlutterPlugin :
                 }
             }
         }
+        
+        // Called from JNI to send site/system details to Flutter
+        @JvmStatic
+        fun sendSiteEvent(
+            wacn: Long,
+            siteId: Long,
+            rfssId: Long,
+            systemId: Long,
+            nac: Int
+        ) {
+            instance?.let { plugin ->
+                plugin.mainHandler.post {
+                    val eventMap = mapOf(
+                        "wacn" to wacn,
+                        "siteId" to siteId,
+                        "rfssId" to rfssId,
+                        "systemId" to systemId,
+                        "nac" to nac
+                    )
+                    plugin.siteEventSink?.success(eventMap)
+                }
+            }
+        }
     }
 
     // Native method declarations
@@ -97,6 +122,9 @@ class DsdFlutterPlugin :
         
         callEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "dsd_flutter/call_events")
         callEventChannel.setStreamHandler(CallEventStreamHandler())
+        
+        siteEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "dsd_flutter/site_events")
+        siteEventChannel.setStreamHandler(SiteEventStreamHandler())
         
         nativeInit()
     }
@@ -140,6 +168,7 @@ class DsdFlutterPlugin :
         channel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         callEventChannel.setStreamHandler(null)
+        siteEventChannel.setStreamHandler(null)
         instance = null
     }
     
@@ -160,6 +189,17 @@ class DsdFlutterPlugin :
         
         override fun onCancel(arguments: Any?) {
             callEventSink = null
+        }
+    }
+    
+    // Inner class for site events stream
+    inner class SiteEventStreamHandler : EventChannel.StreamHandler {
+        override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+            siteEventSink = events
+        }
+        
+        override fun onCancel(arguments: Any?) {
+            siteEventSink = null
         }
     }
 }

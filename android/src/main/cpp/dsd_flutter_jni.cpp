@@ -32,10 +32,17 @@ static int g_stderr_pipe[2] = {-1, -1};
 static jclass g_plugin_class = nullptr;
 static jmethodID g_send_output_method = nullptr;
 static jmethodID g_send_call_event_method = nullptr;
+static jmethodID g_send_site_event_method = nullptr;
 
 // Last known call state for change detection
 static int g_last_tg = 0;
 static int g_last_src = 0;
+
+// Last known site state for change detection
+static unsigned long long g_last_wacn = 0;
+static unsigned long long g_last_siteid = 0;
+static unsigned long long g_last_rfssid = 0;
+static int g_last_nac = 0;
 
 // Send output text to Flutter via JNI callback
 static void send_to_flutter(const char* text) {
@@ -131,7 +138,44 @@ static void send_call_event_to_flutter(
     }
 }
 
-// Poll thread - checks state for call changes
+// Send site/system details to Flutter
+static void send_site_event_to_flutter(
+    unsigned long long wacn,
+    unsigned long long siteId,
+    unsigned long long rfssId,
+    unsigned long long systemId,
+    int nac
+) {
+    if (!g_jvm || !g_plugin_class || !g_send_site_event_method) return;
+    
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    
+    int status = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if (g_jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+            attached = true;
+        } else {
+            return;
+        }
+    } else if (status != JNI_OK) {
+        return;
+    }
+    
+    env->CallStaticVoidMethod(g_plugin_class, g_send_site_event_method,
+        (jlong)wacn,
+        (jlong)siteId,
+        (jlong)rfssId,
+        (jlong)systemId,
+        (jint)nac
+    );
+    
+    if (attached) {
+        g_jvm->DetachCurrentThread();
+    }
+}
+
+// Poll thread - checks state for call and site changes
 static void* poll_thread_func(void* arg) {
     LOGI("Poll thread started");
     
@@ -200,6 +244,33 @@ static void* poll_thread_func(void* arg) {
             
             g_last_tg = tg;
             g_last_src = src;
+        }
+        
+        // Check for site detail changes
+        unsigned long long wacn = g_state->p2_wacn;
+        unsigned long long siteid = g_state->p2_siteid;
+        unsigned long long rfssid = g_state->p2_rfssid;
+        
+        if (wacn != g_last_wacn || siteid != g_last_siteid || 
+            rfssid != g_last_rfssid || nac != g_last_nac) {
+            
+            if (wacn != 0 || siteid != 0 || rfssid != 0) {
+                LOGI("Site details: WACN=0x%llX Site=0x%llX RFSS=0x%llX NAC=0x%X",
+                     wacn, siteid, rfssid, nac);
+                
+                send_site_event_to_flutter(
+                    wacn,
+                    siteid,
+                    rfssid,
+                    0,  // systemId (can add if needed)
+                    nac
+                );
+            }
+            
+            g_last_wacn = wacn;
+            g_last_siteid = siteid;
+            g_last_rfssid = rfssid;
+            g_last_nac = nac;
         }
         
         // Poll every 100ms
@@ -273,6 +344,8 @@ JNI_OnLoad(JavaVM* vm, void* reserved) {
             g_send_output_method = env->GetStaticMethodID(g_plugin_class, "sendOutput", "(Ljava/lang/String;)V");
             g_send_call_event_method = env->GetStaticMethodID(g_plugin_class, "sendCallEvent",
                 "(IIIILjava/lang/String;ZZLjava/lang/String;IDLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+            g_send_site_event_method = env->GetStaticMethodID(g_plugin_class, "sendSiteEvent",
+                "(JJJJI)V");
             env->DeleteLocalRef(localClass);
             LOGI("Flutter callbacks initialized");
         } else {
@@ -321,6 +394,12 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeInit(
     // Reset call tracking
     g_last_tg = 0;
     g_last_src = 0;
+    
+    // Reset site tracking
+    g_last_wacn = 0;
+    g_last_siteid = 0;
+    g_last_rfssid = 0;
+    g_last_nac = 0;
     
     LOGI("DSD initialized successfully");
 }

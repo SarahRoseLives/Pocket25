@@ -46,4 +46,16 @@ class DsdFlutter {
   Stream<Map<String, dynamic>> get callEventStream {
     return DsdFlutterPlatform.instance.callEventStream;
   }
+  
+  /// Stream of site/system detail updates from DSD
+  /// 
+  /// Each event is a Map containing:
+  /// - wacn: int (Wide Area Communications Network ID)
+  /// - siteId: int (Site identifier)
+  /// - rfssId: int (Radio Frequency Subsystem ID)
+  /// - systemId: int (System identifier)
+  /// - nac: int (Network Access Code)
+  Stream<Map<String, dynamic>> get siteEventStream {
+    return DsdFlutterPlatform.instance.siteEventStream;
+  }
 }
