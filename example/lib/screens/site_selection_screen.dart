@@ -51,8 +51,15 @@ class _SiteSelectionScreenState extends State<SiteSelectionScreen> {
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
+      if (kDebugMode) {
+        print('Location permission status: $permission');
+      }
+      
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
+        if (kDebugMode) {
+          print('Location permission after request: $permission');
+        }
         if (permission == LocationPermission.denied) {
           if (kDebugMode) {
             print('Location permission denied');
@@ -74,6 +81,9 @@ class _SiteSelectionScreenState extends State<SiteSelectionScreen> {
         return;
       }
 
+      if (kDebugMode) {
+        print('Attempting to get current position...');
+      }
       final position = await Geolocator.getCurrentPosition();
       if (kDebugMode) {
         print('Got current position: ${position.latitude}, ${position.longitude}');
@@ -94,7 +104,16 @@ class _SiteSelectionScreenState extends State<SiteSelectionScreen> {
   }
 
   void _sortSitesByDistance() {
-    if (_currentPosition == null) return;
+    if (_currentPosition == null) {
+      if (kDebugMode) {
+        print('Cannot sort sites - no current position');
+      }
+      return;
+    }
+
+    if (kDebugMode) {
+      print('Sorting ${_sortedSites.length} sites by distance from current location');
+    }
 
     _sortedSites.sort((a, b) {
       if (a.latitude == null || a.longitude == null) return 1;
@@ -116,6 +135,10 @@ class _SiteSelectionScreenState extends State<SiteSelectionScreen> {
 
       return distanceA.compareTo(distanceB);
     });
+    
+    if (kDebugMode) {
+      print('Sites sorted. Closest site: ${_sortedSites.first.siteName}');
+    }
   }
 
   String _formatDistance(double distanceInMeters) {
