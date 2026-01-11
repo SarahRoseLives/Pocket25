@@ -128,17 +128,13 @@ class ScanningService extends ChangeNotifier {
     }
     
     try {
-      // Stop current scan if running
-      _onStop();
-      await Future.delayed(const Duration(milliseconds: 500));
-      
       // Update frequency in settings
       _settingsService.updateFrequency(_currentFrequency!);
       
       if (_settingsService.rtlSource == RtlSource.nativeUsb) {
         // Native USB mode - use built-in RTL-SDR support
         if (!_settingsService.hasNativeUsbDevice) {
-          // Try to open first available RTL-SDR device
+          // First time - need to open device and start engine
           final devices = await NativeRtlSdrService.listDevices();
           if (devices.isEmpty) {
             throw Exception('No RTL-SDR USB devices found');
@@ -153,36 +149,91 @@ class ScanningService extends ChangeNotifier {
             result['fd'] as int,
             result['devicePath'] as String,
           );
-        }
-        
-        if (kDebugMode) {
-          print('Using native USB RTL-SDR: fd=${_settingsService.nativeUsbFd}, freq=${_settingsService.frequencyHz} Hz');
-        }
-        
-        // Configure native USB connection
-        final success = await _dsdPlugin.connectNativeUsb(
-          fd: _settingsService.nativeUsbFd,
-          devicePath: _settingsService.nativeUsbPath,
-          freqHz: _settingsService.frequencyHz,
-          sampleRate: _settingsService.sampleRate,
-          gain: _settingsService.gain * 10, // Convert to tenths of dB
-          ppm: _settingsService.ppm,
-        );
-        
-        if (!success) {
-          throw Exception('Failed to configure native RTL-SDR');
+          
+          if (kDebugMode) {
+            print('Opened native USB RTL-SDR: fd=${result['fd']}, path=${result['devicePath']}');
+          }
+          
+          // Configure native USB connection
+          final success = await _dsdPlugin.connectNativeUsb(
+            fd: result['fd'] as int,
+            devicePath: result['devicePath'] as String,
+            freqHz: _settingsService.frequencyHz,
+            sampleRate: _settingsService.sampleRate,
+            gain: _settingsService.gain * 10, // Convert to tenths of dB
+            ppm: _settingsService.ppm,
+          );
+          
+          if (!success) {
+            throw Exception('Failed to configure native RTL-SDR');
+          }
+          
+          // Start the engine
+          _onStart();
+        } else {
+          // Device already open - just change frequency without restart
+          if (kDebugMode) {
+            print('Retuning native USB RTL-SDR to ${_settingsService.frequencyHz} Hz');
+          }
+          
+          // Update frequency in opts for next engine run
+          final success = await _dsdPlugin.setNativeRtlFrequency(_settingsService.frequencyHz);
+          if (!success) {
+            if (kDebugMode) {
+              print('Warning: Failed to set frequency via setNativeRtlFrequency');
+            }
+          }
+          
+          // For now, we need to stop and restart to pick up the new frequency
+          // TODO: Implement live retuning in the engine
+          _onStop();
+          await Future.delayed(const Duration(milliseconds: 300));
+          
+          // Re-open USB device since stopping closes it
+          final devices = await NativeRtlSdrService.listDevices();
+          if (devices.isEmpty) {
+            throw Exception('No RTL-SDR USB devices found');
+          }
+          
+          final result = await NativeRtlSdrService.openDevice(devices.first.deviceName);
+          if (result == null) {
+            throw Exception('Failed to re-open RTL-SDR USB device');
+          }
+          
+          _settingsService.setNativeUsbDevice(
+            result['fd'] as int,
+            result['devicePath'] as String,
+          );
+          
+          // Configure with new frequency
+          final configSuccess = await _dsdPlugin.connectNativeUsb(
+            fd: result['fd'] as int,
+            devicePath: result['devicePath'] as String,
+            freqHz: _settingsService.frequencyHz,
+            sampleRate: _settingsService.sampleRate,
+            gain: _settingsService.gain * 10,
+            ppm: _settingsService.ppm,
+          );
+          
+          if (!configSuccess) {
+            throw Exception('Failed to configure native RTL-SDR');
+          }
+          
+          _onStart();
         }
       } else {
-        // Remote rtl_tcp mode
+        // Remote rtl_tcp mode - stop/start approach
+        _onStop();
+        await Future.delayed(const Duration(milliseconds: 500));
+        
         await _dsdPlugin.connect(
           _settingsService.effectiveHost,
           _settingsService.effectivePort,
           _settingsService.frequencyHz,
         );
+        
+        _onStart();
       }
-      
-      // Start scanning with new frequency
-      _onStart();
       
       notifyListeners();
     } catch (e) {
