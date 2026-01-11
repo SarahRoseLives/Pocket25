@@ -1,6 +1,16 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
+/// Filter status for talkgroups
+/// 0 = normal (no filter)
+/// 1 = whitelisted (hear this TG when in whitelist mode)
+/// 2 = blacklisted (mute this TG when in blacklist mode)
+class TalkgroupFilterStatus {
+  static const int normal = 0;
+  static const int whitelisted = 1;
+  static const int blacklisted = 2;
+}
+
 class DatabaseService {
   static Database? _database;
 
@@ -16,7 +26,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE systems (
@@ -54,6 +64,7 @@ class DatabaseService {
             system_id INTEGER NOT NULL,
             tg_decimal INTEGER NOT NULL,
             tg_name TEXT NOT NULL,
+            filter_status INTEGER DEFAULT 0,
             FOREIGN KEY (system_id) REFERENCES systems (system_id) ON DELETE CASCADE
           )
         ''');
@@ -69,6 +80,21 @@ class DatabaseService {
         await db.execute('''
           CREATE INDEX idx_talkgroups_system ON talkgroups(system_id)
         ''');
+        
+        await db.execute('''
+          CREATE INDEX idx_talkgroups_filter ON talkgroups(filter_status)
+        ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          // Add filter_status column to talkgroups table
+          await db.execute('''
+            ALTER TABLE talkgroups ADD COLUMN filter_status INTEGER DEFAULT 0
+          ''');
+          await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_talkgroups_filter ON talkgroups(filter_status)
+          ''');
+        }
       },
     );
   }
@@ -186,5 +212,110 @@ class DatabaseService {
   Future<void> clearTalkgroups(int systemId) async {
     final db = await database;
     await db.delete('talkgroups', where: 'system_id = ?', whereArgs: [systemId]);
+  }
+  
+  // ============================================================================
+  // Talkgroup Filter Methods
+  // ============================================================================
+  
+  /// Set the filter status for a talkgroup
+  Future<void> setTalkgroupFilterStatus(int systemId, int tgDecimal, int filterStatus) async {
+    final db = await database;
+    await db.update(
+      'talkgroups',
+      {'filter_status': filterStatus},
+      where: 'system_id = ? AND tg_decimal = ?',
+      whereArgs: [systemId, tgDecimal],
+    );
+  }
+  
+  /// Get all whitelisted talkgroups for a system
+  Future<List<int>> getWhitelistedTalkgroups(int systemId) async {
+    final db = await database;
+    final results = await db.query(
+      'talkgroups',
+      columns: ['tg_decimal'],
+      where: 'system_id = ? AND filter_status = ?',
+      whereArgs: [systemId, TalkgroupFilterStatus.whitelisted],
+    );
+    return results.map((row) => row['tg_decimal'] as int).toList();
+  }
+  
+  /// Get all blacklisted talkgroups for a system
+  Future<List<int>> getBlacklistedTalkgroups(int systemId) async {
+    final db = await database;
+    final results = await db.query(
+      'talkgroups',
+      columns: ['tg_decimal'],
+      where: 'system_id = ? AND filter_status = ?',
+      whereArgs: [systemId, TalkgroupFilterStatus.blacklisted],
+    );
+    return results.map((row) => row['tg_decimal'] as int).toList();
+  }
+  
+  /// Get talkgroups with their filter status for a system
+  Future<List<Map<String, dynamic>>> getTalkgroupsWithFilterStatus(int systemId) async {
+    final db = await database;
+    return await db.query(
+      'talkgroups',
+      where: 'system_id = ?',
+      whereArgs: [systemId],
+      orderBy: 'tg_decimal',
+    );
+  }
+  
+  /// Clear all filter statuses for a system (reset to normal)
+  Future<void> clearTalkgroupFilters(int systemId) async {
+    final db = await database;
+    await db.update(
+      'talkgroups',
+      {'filter_status': TalkgroupFilterStatus.normal},
+      where: 'system_id = ?',
+      whereArgs: [systemId],
+    );
+  }
+  
+  /// Toggle whitelist status for a talkgroup
+  Future<int> toggleWhitelist(int systemId, int tgDecimal) async {
+    final db = await database;
+    final results = await db.query(
+      'talkgroups',
+      columns: ['filter_status'],
+      where: 'system_id = ? AND tg_decimal = ?',
+      whereArgs: [systemId, tgDecimal],
+      limit: 1,
+    );
+    
+    if (results.isEmpty) return TalkgroupFilterStatus.normal;
+    
+    final currentStatus = results.first['filter_status'] as int? ?? TalkgroupFilterStatus.normal;
+    final newStatus = currentStatus == TalkgroupFilterStatus.whitelisted 
+        ? TalkgroupFilterStatus.normal 
+        : TalkgroupFilterStatus.whitelisted;
+    
+    await setTalkgroupFilterStatus(systemId, tgDecimal, newStatus);
+    return newStatus;
+  }
+  
+  /// Toggle blacklist status for a talkgroup
+  Future<int> toggleBlacklist(int systemId, int tgDecimal) async {
+    final db = await database;
+    final results = await db.query(
+      'talkgroups',
+      columns: ['filter_status'],
+      where: 'system_id = ? AND tg_decimal = ?',
+      whereArgs: [systemId, tgDecimal],
+      limit: 1,
+    );
+    
+    if (results.isEmpty) return TalkgroupFilterStatus.normal;
+    
+    final currentStatus = results.first['filter_status'] as int? ?? TalkgroupFilterStatus.normal;
+    final newStatus = currentStatus == TalkgroupFilterStatus.blacklisted 
+        ? TalkgroupFilterStatus.normal 
+        : TalkgroupFilterStatus.blacklisted;
+    
+    await setTalkgroupFilterStatus(systemId, tgDecimal, newStatus);
+    return newStatus;
   }
 }

@@ -100,4 +100,46 @@ class DsdFlutter {
   Stream<Map<String, dynamic>> get siteEventStream {
     return DsdFlutterPlatform.instance.siteEventStream;
   }
+  
+  /// Set the talkgroup filter mode
+  /// 
+  /// [mode] values:
+  /// - 0: Disabled (hear all calls)
+  /// - 1: Whitelist (only hear talkgroups in the filter list)
+  /// - 2: Blacklist (mute talkgroups in the filter list)
+  Future<void> setFilterMode(int mode) {
+    return DsdFlutterPlatform.instance.setFilterMode(mode);
+  }
+  
+  /// Set the complete list of talkgroups for filtering
+  /// 
+  /// Replaces any existing filter list with the provided talkgroups.
+  Future<void> setFilterTalkgroups(List<int> talkgroups) {
+    return DsdFlutterPlatform.instance.setFilterTalkgroups(talkgroups);
+  }
+  
+  /// Add a single talkgroup to the filter list
+  Future<void> addFilterTalkgroup(int talkgroup) {
+    return DsdFlutterPlatform.instance.addFilterTalkgroup(talkgroup);
+  }
+  
+  /// Remove a single talkgroup from the filter list
+  Future<void> removeFilterTalkgroup(int talkgroup) {
+    return DsdFlutterPlatform.instance.removeFilterTalkgroup(talkgroup);
+  }
+  
+  /// Clear all talkgroups from the filter list
+  Future<void> clearFilterTalkgroups() {
+    return DsdFlutterPlatform.instance.clearFilterTalkgroups();
+  }
+  
+  /// Get the current filter mode
+  /// 
+  /// Returns:
+  /// - 0: Disabled
+  /// - 1: Whitelist
+  /// - 2: Blacklist
+  Future<int> getFilterMode() {
+    return DsdFlutterPlatform.instance.getFilterMode();
+  }
 }

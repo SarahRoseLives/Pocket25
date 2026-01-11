@@ -90,4 +90,35 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
   Stream<Map<String, dynamic>> get siteEventStream {
     throw UnimplementedError('siteEventStream has not been implemented.');
   }
+  
+  /// Set the talkgroup filter mode
+  /// mode: 0=disabled, 1=whitelist (only hear listed TGs), 2=blacklist (mute listed TGs)
+  Future<void> setFilterMode(int mode) {
+    throw UnimplementedError('setFilterMode() has not been implemented.');
+  }
+  
+  /// Set the list of talkgroups for filtering
+  Future<void> setFilterTalkgroups(List<int> talkgroups) {
+    throw UnimplementedError('setFilterTalkgroups() has not been implemented.');
+  }
+  
+  /// Add a single talkgroup to the filter list
+  Future<void> addFilterTalkgroup(int talkgroup) {
+    throw UnimplementedError('addFilterTalkgroup() has not been implemented.');
+  }
+  
+  /// Remove a single talkgroup from the filter list
+  Future<void> removeFilterTalkgroup(int talkgroup) {
+    throw UnimplementedError('removeFilterTalkgroup() has not been implemented.');
+  }
+  
+  /// Clear all talkgroups from the filter list
+  Future<void> clearFilterTalkgroups() {
+    throw UnimplementedError('clearFilterTalkgroups() has not been implemented.');
+  }
+  
+  /// Get the current filter mode
+  Future<int> getFilterMode() {
+    throw UnimplementedError('getFilterMode() has not been implemented.');
+  }
 }

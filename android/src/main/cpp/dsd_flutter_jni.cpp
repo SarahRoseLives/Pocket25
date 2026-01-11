@@ -45,6 +45,63 @@ static jmethodID g_send_site_event_method = nullptr;
 static int g_last_tg = 0;
 static int g_last_src = 0;
 
+// ============================================================================
+// Talkgroup Filtering (Whitelist/Blacklist)
+// ============================================================================
+
+#include <set>
+#include <mutex>
+
+enum FilterMode {
+    FILTER_MODE_DISABLED = 0,  // No filtering - hear all calls
+    FILTER_MODE_WHITELIST = 1, // Only hear whitelisted talkgroups
+    FILTER_MODE_BLACKLIST = 2  // Hear all except blacklisted talkgroups
+};
+
+static FilterMode g_filter_mode = FILTER_MODE_DISABLED;
+static std::set<int> g_filter_talkgroups;
+static std::mutex g_filter_mutex;
+static bool g_audio_enabled_by_user = true;  // Track user's audio preference
+static bool g_audio_muted_by_filter = false; // Track if filter muted audio
+
+// Check if a talkgroup should be heard based on filter settings
+static bool should_hear_talkgroup(int tg) {
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    
+    if (g_filter_mode == FILTER_MODE_DISABLED) {
+        return true;
+    }
+    
+    bool in_list = g_filter_talkgroups.find(tg) != g_filter_talkgroups.end();
+    
+    if (g_filter_mode == FILTER_MODE_WHITELIST) {
+        return in_list;  // Only hear if in whitelist
+    } else { // FILTER_MODE_BLACKLIST
+        return !in_list; // Hear unless in blacklist
+    }
+}
+
+// Update audio output state based on filter
+static void update_audio_for_talkgroup(int tg) {
+    if (!g_opts) return;
+    
+    bool should_hear = should_hear_talkgroup(tg);
+    
+    if (should_hear && g_audio_enabled_by_user) {
+        if (g_audio_muted_by_filter) {
+            g_opts->audio_out = 1;
+            g_audio_muted_by_filter = false;
+            LOGI("Audio unmuted for TG %d", tg);
+        }
+    } else if (!should_hear) {
+        if (!g_audio_muted_by_filter && g_opts->audio_out) {
+            g_opts->audio_out = 0;
+            g_audio_muted_by_filter = true;
+            LOGI("Audio muted for filtered TG %d", tg);
+        }
+    }
+}
+
 // Last known site state for change detection
 static unsigned long long g_last_wacn = 0;
 static unsigned long long g_last_siteid = 0;
@@ -196,6 +253,9 @@ static void* poll_thread_func(void* arg) {
         // Detect call changes
         if (tg != g_last_tg || src != g_last_src) {
             if (tg != 0 || src != 0) {
+                // New or updated call - apply talkgroup filter
+                update_audio_for_talkgroup(tg);
+                
                 // New or updated call
                 const char* callType = "Group";
                 if (g_state->gi[0] == 1) {
@@ -211,8 +271,11 @@ static void* poll_thread_func(void* arg) {
                 
                 int eventType = (g_last_tg == 0 && g_last_src == 0) ? 0 : 1; // 0=start, 1=update
                 
-                LOGI("Call event: type=%d tg=%d src=%d nac=0x%X slot=%d", 
-                     eventType, tg, src, nac, slot);
+                // Add isFiltered flag to indicate if audio is muted
+                bool isFiltered = !should_hear_talkgroup(tg);
+                
+                LOGI("Call event: type=%d tg=%d src=%d nac=0x%X slot=%d filtered=%d", 
+                     eventType, tg, src, nac, slot, isFiltered);
                 
                 send_call_event_to_flutter(
                     eventType,
@@ -230,6 +293,13 @@ static void* poll_thread_func(void* arg) {
                     sourceName
                 );
             } else if (g_last_tg != 0 || g_last_src != 0) {
+                // Call ended - restore audio if it was muted by filter
+                if (g_audio_muted_by_filter && g_audio_enabled_by_user && g_opts) {
+                    g_opts->audio_out = 1;
+                    g_audio_muted_by_filter = false;
+                    LOGI("Audio restored after filtered call ended");
+                }
+                
                 // Call ended
                 LOGI("Call ended: was tg=%d src=%d", g_last_tg, g_last_src);
                 send_call_event_to_flutter(
@@ -568,10 +638,144 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetAudioEnabled(
     
     LOGI("Setting audio enabled: %d", enabled);
     
+    g_audio_enabled_by_user = enabled;
+    
     if (g_opts) {
-        g_opts->audio_out = enabled ? 1 : 0;
-        LOGI("Audio output %s", enabled ? "enabled" : "disabled");
+        // Only enable if user wants it AND not muted by filter
+        if (enabled && !g_audio_muted_by_filter) {
+            g_opts->audio_out = 1;
+        } else if (!enabled) {
+            g_opts->audio_out = 0;
+        }
+        LOGI("Audio output %s (user=%d, filter_muted=%d)", 
+             g_opts->audio_out ? "enabled" : "disabled",
+             g_audio_enabled_by_user, g_audio_muted_by_filter);
     }
+}
+
+// ============================================================================
+// Talkgroup Filter JNI Functions
+// ============================================================================
+
+/**
+ * Set the filter mode
+ * @param mode 0=disabled, 1=whitelist, 2=blacklist
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetFilterMode(
+    JNIEnv* env,
+    jobject thiz,
+    jint mode) {
+    
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    g_filter_mode = static_cast<FilterMode>(mode);
+    LOGI("Filter mode set to: %d", mode);
+    
+    // Re-evaluate current call if active
+    if (g_last_tg != 0) {
+        update_audio_for_talkgroup(g_last_tg);
+    }
+}
+
+/**
+ * Set the list of talkgroups for filtering
+ * @param talkgroups Array of talkgroup IDs
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetFilterTalkgroups(
+    JNIEnv* env,
+    jobject thiz,
+    jintArray talkgroups) {
+    
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    g_filter_talkgroups.clear();
+    
+    if (talkgroups != nullptr) {
+        jsize len = env->GetArrayLength(talkgroups);
+        jint* tgs = env->GetIntArrayElements(talkgroups, nullptr);
+        
+        for (jsize i = 0; i < len; i++) {
+            g_filter_talkgroups.insert(tgs[i]);
+        }
+        
+        env->ReleaseIntArrayElements(talkgroups, tgs, 0);
+        LOGI("Filter talkgroups updated: %zu entries", g_filter_talkgroups.size());
+    } else {
+        LOGI("Filter talkgroups cleared");
+    }
+    
+    // Re-evaluate current call if active
+    if (g_last_tg != 0) {
+        update_audio_for_talkgroup(g_last_tg);
+    }
+}
+
+/**
+ * Add a single talkgroup to the filter list
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeAddFilterTalkgroup(
+    JNIEnv* env,
+    jobject thiz,
+    jint talkgroup) {
+    
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    g_filter_talkgroups.insert(talkgroup);
+    LOGI("Added TG %d to filter list (now %zu entries)", talkgroup, g_filter_talkgroups.size());
+    
+    // Re-evaluate current call if it matches
+    if (g_last_tg == talkgroup) {
+        update_audio_for_talkgroup(g_last_tg);
+    }
+}
+
+/**
+ * Remove a single talkgroup from the filter list
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeRemoveFilterTalkgroup(
+    JNIEnv* env,
+    jobject thiz,
+    jint talkgroup) {
+    
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    g_filter_talkgroups.erase(talkgroup);
+    LOGI("Removed TG %d from filter list (now %zu entries)", talkgroup, g_filter_talkgroups.size());
+    
+    // Re-evaluate current call if it matches
+    if (g_last_tg == talkgroup) {
+        update_audio_for_talkgroup(g_last_tg);
+    }
+}
+
+/**
+ * Clear all talkgroups from the filter list
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeClearFilterTalkgroups(
+    JNIEnv* env,
+    jobject thiz) {
+    
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    g_filter_talkgroups.clear();
+    LOGI("Filter talkgroups cleared");
+    
+    // Re-evaluate current call if active
+    if (g_last_tg != 0) {
+        update_audio_for_talkgroup(g_last_tg);
+    }
+}
+
+/**
+ * Get the current filter mode
+ */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeGetFilterMode(
+    JNIEnv* env,
+    jobject thiz) {
+    
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    return static_cast<jint>(g_filter_mode);
 }
 
 // ============================================================================

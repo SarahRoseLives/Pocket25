@@ -124,4 +124,43 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
         .map((event) => Map<String, dynamic>.from(event as Map));
     return _siteEventStream!;
   }
+  
+  @override
+  Future<void> setFilterMode(int mode) async {
+    await methodChannel.invokeMethod('setFilterMode', {
+      'mode': mode,
+    });
+  }
+  
+  @override
+  Future<void> setFilterTalkgroups(List<int> talkgroups) async {
+    await methodChannel.invokeMethod('setFilterTalkgroups', {
+      'talkgroups': talkgroups,
+    });
+  }
+  
+  @override
+  Future<void> addFilterTalkgroup(int talkgroup) async {
+    await methodChannel.invokeMethod('addFilterTalkgroup', {
+      'talkgroup': talkgroup,
+    });
+  }
+  
+  @override
+  Future<void> removeFilterTalkgroup(int talkgroup) async {
+    await methodChannel.invokeMethod('removeFilterTalkgroup', {
+      'talkgroup': talkgroup,
+    });
+  }
+  
+  @override
+  Future<void> clearFilterTalkgroups() async {
+    await methodChannel.invokeMethod('clearFilterTalkgroups');
+  }
+  
+  @override
+  Future<int> getFilterMode() async {
+    final result = await methodChannel.invokeMethod<int>('getFilterMode');
+    return result ?? 0;
+  }
 }

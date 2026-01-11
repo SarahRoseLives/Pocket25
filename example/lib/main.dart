@@ -63,6 +63,9 @@ class _MainScreenState extends State<MainScreen> {
   final List<CallEvent> _recentCalls = [];
   final ScrollController _logScrollController = ScrollController();
   
+  // Muted talkgroups tracking (blacklist mode)
+  final Set<int> _mutedTalkgroups = {};
+  
   CallEvent? _currentCall;
   SiteDetails? _currentSiteDetails;
   bool _isRunning = false;
@@ -85,6 +88,46 @@ class _MainScreenState extends State<MainScreen> {
     _listenToCallEvents();
     _listenToSiteEvents();
     _startCallTimeoutTimer();
+    _initializeFilters();
+  }
+  
+  Future<void> _initializeFilters() async {
+    // Set blacklist mode by default and sync muted TGs to native layer
+    await _dsdFlutterPlugin.setFilterMode(2); // Blacklist mode
+    await _syncMutedTalkgroupsToNative();
+  }
+  
+  Future<void> _syncMutedTalkgroupsToNative() async {
+    await _dsdFlutterPlugin.setFilterTalkgroups(_mutedTalkgroups.toList());
+  }
+  
+  Future<void> _toggleMute(int talkgroup) async {
+    setState(() {
+      if (_mutedTalkgroups.contains(talkgroup)) {
+        _mutedTalkgroups.remove(talkgroup);
+      } else {
+        _mutedTalkgroups.add(talkgroup);
+      }
+      
+      // Update current call's muted status if it matches
+      if (_currentCall != null && _currentCall!.talkgroup == talkgroup) {
+        _currentCall = _currentCall!.copyWithMuted(_mutedTalkgroups.contains(talkgroup));
+      }
+      
+      // Update recent calls
+      for (int i = 0; i < _recentCalls.length; i++) {
+        if (_recentCalls[i].talkgroup == talkgroup) {
+          _recentCalls[i] = _recentCalls[i].copyWithMuted(_mutedTalkgroups.contains(talkgroup));
+        }
+      }
+    });
+    
+    // Sync to native layer
+    await _syncMutedTalkgroupsToNative();
+  }
+  
+  bool _isTalkgroupMuted(int talkgroup) {
+    return _mutedTalkgroups.contains(talkgroup);
   }
 
   @override
@@ -153,7 +196,10 @@ class _MainScreenState extends State<MainScreen> {
       }
     }
     
-    final callEvent = CallEvent.fromMap(eventMap);
+    // Check if this talkgroup is muted
+    final talkgroup = eventMap['talkgroup'] as int? ?? 0;
+    final isMuted = _isTalkgroupMuted(talkgroup);
+    final callEvent = CallEvent.fromMap(eventMap, isMuted: isMuted);
     
     if (!mounted) return;
     
@@ -252,6 +298,7 @@ class _MainScreenState extends State<MainScreen> {
           recentCalls: _recentCalls,
           isRunning: _isRunning,
           scanningService: _scanningService,
+          onToggleMute: _toggleMute,
         );
       case 1:
         return LogScreen(

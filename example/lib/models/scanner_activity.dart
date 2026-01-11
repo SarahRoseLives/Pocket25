@@ -19,6 +19,7 @@ class CallEvent {
   final String groupName;
   final String sourceName;
   final DateTime timestamp;
+  final bool isMuted;
 
   CallEvent({
     required this.eventType,
@@ -34,10 +35,11 @@ class CallEvent {
     required this.systemName,
     required this.groupName,
     required this.sourceName,
+    this.isMuted = false,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
-  factory CallEvent.fromMap(Map<String, dynamic> map) {
+  factory CallEvent.fromMap(Map<String, dynamic> map, {bool isMuted = false}) {
     return CallEvent(
       eventType: CallEventType.values[map['eventType'] as int],
       talkgroup: map['talkgroup'] as int,
@@ -52,6 +54,28 @@ class CallEvent {
       systemName: map['systemName'] as String,
       groupName: map['groupName'] as String,
       sourceName: map['sourceName'] as String,
+      isMuted: isMuted,
+    );
+  }
+  
+  /// Create a copy with updated muted status
+  CallEvent copyWithMuted(bool muted) {
+    return CallEvent(
+      eventType: eventType,
+      talkgroup: talkgroup,
+      sourceId: sourceId,
+      nac: nac,
+      callType: callType,
+      isEncrypted: isEncrypted,
+      isEmergency: isEmergency,
+      algName: algName,
+      slot: slot,
+      frequency: frequency,
+      systemName: systemName,
+      groupName: groupName,
+      sourceName: sourceName,
+      isMuted: muted,
+      timestamp: timestamp,
     );
   }
 

@@ -116,6 +116,14 @@ class DsdFlutterPlugin :
     private external fun nativeCloseRtlSdrUsb()
     private external fun nativeSetRtlSdrFrequency(frequency: Long): Boolean
     private external fun nativeSetRtlSdrGain(gain: Int): Boolean
+    
+    // Talkgroup filter native methods
+    private external fun nativeSetFilterMode(mode: Int)
+    private external fun nativeSetFilterTalkgroups(talkgroups: IntArray?)
+    private external fun nativeAddFilterTalkgroup(talkgroup: Int)
+    private external fun nativeRemoveFilterTalkgroup(talkgroup: Int)
+    private external fun nativeClearFilterTalkgroups()
+    private external fun nativeGetFilterMode(): Int
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
@@ -186,6 +194,33 @@ class DsdFlutterPlugin :
             "setNativeRtlGain" -> {
                 val gain = call.argument<Int>("gain") ?: 0
                 result.success(nativeSetRtlSdrGain(gain))
+            }
+            "setFilterMode" -> {
+                val mode = call.argument<Int>("mode") ?: 0
+                nativeSetFilterMode(mode)
+                result.success(null)
+            }
+            "setFilterTalkgroups" -> {
+                val talkgroups = call.argument<List<Int>>("talkgroups")
+                nativeSetFilterTalkgroups(talkgroups?.toIntArray())
+                result.success(null)
+            }
+            "addFilterTalkgroup" -> {
+                val talkgroup = call.argument<Int>("talkgroup") ?: 0
+                nativeAddFilterTalkgroup(talkgroup)
+                result.success(null)
+            }
+            "removeFilterTalkgroup" -> {
+                val talkgroup = call.argument<Int>("talkgroup") ?: 0
+                nativeRemoveFilterTalkgroup(talkgroup)
+                result.success(null)
+            }
+            "clearFilterTalkgroups" -> {
+                nativeClearFilterTalkgroups()
+                result.success(null)
+            }
+            "getFilterMode" -> {
+                result.success(nativeGetFilterMode())
             }
             else -> {
                 result.notImplemented()

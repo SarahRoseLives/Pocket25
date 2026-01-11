@@ -7,6 +7,7 @@ class ScannerScreen extends StatelessWidget {
   final List<CallEvent> recentCalls;
   final bool isRunning;
   final ScanningService scanningService;
+  final Function(int talkgroup)? onToggleMute;
 
   const ScannerScreen({
     super.key,
@@ -14,6 +15,7 @@ class ScannerScreen extends StatelessWidget {
     required this.recentCalls,
     required this.isRunning,
     required this.scanningService,
+    this.onToggleMute,
   });
 
   @override
@@ -81,11 +83,20 @@ class ScannerScreen extends StatelessWidget {
 
     final call = currentCall!;
     
-    return Container(
-      color: call.isEmergency ? Colors.red[900] : Colors.grey[900],
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    // Wrap with GestureDetector for long-press to mute/unmute
+    return GestureDetector(
+      onLongPress: () {
+        if (onToggleMute != null) {
+          onToggleMute!(call.talkgroup);
+        }
+      },
+      child: Container(
+        color: call.isMuted 
+            ? Colors.grey[850] 
+            : (call.isEmergency ? Colors.red[900] : Colors.grey[900]),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Status bar - fixed at top
           Row(
@@ -95,6 +106,13 @@ class ScannerScreen extends StatelessWidget {
                 isRunning ? Colors.green : Colors.grey,
               ),
               const SizedBox(width: 6),
+              if (call.isMuted)
+                Row(
+                  children: [
+                    _buildStatusChip('MUTED', Colors.grey[700]!),
+                    const SizedBox(width: 6),
+                  ],
+                ),
               if (scanningService.gpsHoppingEnabled)
                 Row(
                   children: [
@@ -210,6 +228,7 @@ class ScannerScreen extends StatelessWidget {
           ),
         ],
       ),
+      ),
     );
   }
 
@@ -277,54 +296,76 @@ class ScannerScreen extends StatelessWidget {
   }
 
   Widget _buildRecentCallTile(CallEvent call) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: call.isEmergency 
-            ? Colors.red[900]!.withValues(alpha: 0.5)
-            : Colors.grey[800],
-        borderRadius: BorderRadius.circular(4),
-        border: call.isEncrypted 
-            ? Border.all(color: Colors.orange, width: 1)
-            : null,
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  call.talkgroupDisplay,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+    return GestureDetector(
+      onLongPress: () {
+        if (onToggleMute != null) {
+          onToggleMute!(call.talkgroup);
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: call.isMuted
+              ? Colors.grey[900]
+              : (call.isEmergency 
+                  ? Colors.red[900]!.withValues(alpha: 0.5)
+                  : Colors.grey[800]),
+          borderRadius: BorderRadius.circular(4),
+          border: call.isMuted
+              ? Border.all(color: Colors.grey[700]!, width: 1)
+              : (call.isEncrypted 
+                  ? Border.all(color: Colors.orange, width: 1)
+                  : null),
+        ),
+        child: Row(
+          children: [
+            // Muted indicator icon
+            if (call.isMuted)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Icon(
+                  Icons.volume_off,
+                  size: 12,
+                  color: Colors.grey[500],
                 ),
-                if (call.sourceDisplay.isNotEmpty)
+              ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
                   Text(
-                    call.sourceDisplay,
+                    call.talkgroupDisplay,
                     style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.grey[400],
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      color: call.isMuted ? Colors.grey[500] : Colors.white,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
-              ],
+                  if (call.sourceDisplay.isNotEmpty)
+                    Text(
+                      call.sourceDisplay,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: call.isMuted ? Colors.grey[600] : Colors.grey[400],
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            call.timeDisplay,
-            style: TextStyle(
-              fontSize: 9,
-              color: Colors.grey[500],
+            const SizedBox(width: 4),
+            Text(
+              call.timeDisplay,
+              style: TextStyle(
+                fontSize: 9,
+                color: Colors.grey[500],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

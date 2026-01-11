@@ -28,6 +28,49 @@ class MockDsdFlutterPlatform
   
   @override
   Stream<Map<String, dynamic>> get callEventStream => const Stream.empty();
+  
+  @override
+  Stream<Map<String, dynamic>> get siteEventStream => const Stream.empty();
+  
+  @override
+  Future<bool> isNativeRtlSdrSupported() async => false;
+  
+  @override
+  Future<bool> connectNativeUsb({
+    required int fd,
+    required String devicePath,
+    required int freqHz,
+    int sampleRate = 2400000,
+    int gain = 0,
+    int ppm = 0,
+  }) async => false;
+  
+  @override
+  Future<void> disconnectNativeUsb() async {}
+  
+  @override
+  Future<bool> setNativeRtlFrequency(int freqHz) async => false;
+  
+  @override
+  Future<bool> setNativeRtlGain(int gain) async => false;
+  
+  @override
+  Future<void> setFilterMode(int mode) async {}
+  
+  @override
+  Future<void> setFilterTalkgroups(List<int> talkgroups) async {}
+  
+  @override
+  Future<void> addFilterTalkgroup(int talkgroup) async {}
+  
+  @override
+  Future<void> removeFilterTalkgroup(int talkgroup) async {}
+  
+  @override
+  Future<void> clearFilterTalkgroups() async {}
+  
+  @override
+  Future<int> getFilterMode() async => 0;
 }
 
 void main() {
