@@ -624,7 +624,17 @@ dsd_engine_setup_io(dsd_opts* opts, dsd_state* state) {
 
     RTLEND:
 
-#if defined(_MSC_VER) && defined(_WIN32)
+#ifdef __ANDROID__
+        // On Android with native USB, skip standard device enumeration
+        // The device is accessed via file descriptor, not libusb enumeration
+        if (opts->rtl_android_usb_fd >= 0 && opts->rtl_android_usb_path[0] != '\0') {
+            LOG_NOTICE("Using Android native USB RTL-SDR (fd=%d, path=%s) - skipping device enumeration\n",
+                       opts->rtl_android_usb_fd, opts->rtl_android_usb_path);
+            device_count = 1;  // Pretend we have one device
+        } else {
+            device_count = (int)rtlsdr_get_device_count();
+        }
+#elif defined(_MSC_VER) && defined(_WIN32)
         __try {
             device_count = (int)rtlsdr_get_device_count();
         } __except (EXCEPTION_EXECUTE_HANDLER) {

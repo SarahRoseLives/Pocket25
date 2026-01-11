@@ -20,6 +20,13 @@ extern "C" {
 #include <dsd-neo/runtime/exitflag.h>
 }
 
+// Native RTL-SDR USB support (when enabled)
+#ifdef NATIVE_RTLSDR_ENABLED
+#include <rtl-sdr.h>
+#include <rtl-sdr-android.h>
+#include <dsd-neo/io/rtl_device.h>
+#endif
+
 // Global context
 static dsd_opts* g_opts = nullptr;
 static dsd_state* g_state = nullptr;
@@ -391,6 +398,10 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeInit(
     initOpts(g_opts);
     initState(g_state);
     
+    // Initialize Android native USB fields
+    g_opts->rtl_android_usb_fd = -1;
+    g_opts->rtl_android_usb_path[0] = '\0';
+    
     // Reset call tracking
     g_last_tg = 0;
     g_last_src = 0;
@@ -477,6 +488,8 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStart(
         LOGI("Config: rtlsdr_center_freq=%u", g_opts->rtlsdr_center_freq);
         LOGI("Config: audio_out_type=%d", g_opts->audio_out_type);
         LOGI("Config: p25_trunk=%d", g_opts->p25_trunk);
+        LOGI("Config: rtl_android_usb_fd=%d", g_opts->rtl_android_usb_fd);
+        LOGI("Config: rtl_android_usb_path=%s", g_opts->rtl_android_usb_path);
         
         // Reset call tracking
         g_last_tg = 0;
@@ -560,3 +573,198 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetAudioEnabled(
         LOGI("Audio output %s", enabled ? "enabled" : "disabled");
     }
 }
+
+// ============================================================================
+// Native USB RTL-SDR Support
+// ============================================================================
+
+#ifdef NATIVE_RTLSDR_ENABLED
+
+/**
+ * Check if native RTL-SDR USB support is available
+ */
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeIsRtlSdrSupported(
+    JNIEnv* env,
+    jobject thiz) {
+    return JNI_TRUE;
+}
+
+/**
+ * Open RTL-SDR device using Android USB file descriptor
+ * 
+ * @param fd USB file descriptor from UsbDeviceConnection.getFileDescriptor()
+ * @param devicePath USB device path from UsbDevice.getDeviceName()
+ * @param frequency Initial center frequency in Hz
+ * @param sampleRate Sample rate in Hz
+ * @param gain Gain in tenths of dB (e.g., 480 = 48.0 dB), or 0 for auto
+ * @param ppm Frequency correction in PPM
+ * @return true on success, false on failure
+ */
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeOpenRtlSdrUsb(
+    JNIEnv* env,
+    jobject thiz,
+    jint fd,
+    jstring devicePath,
+    jlong frequency,
+    jint sampleRate,
+    jint gain,
+    jint ppm) {
+    
+    LOGI("Configuring native RTL-SDR USB: fd=%d, freq=%lld, rate=%d, gain=%d, ppm=%d",
+         fd, (long long)frequency, sampleRate, gain, ppm);
+    
+    if (!g_opts) {
+        LOGE("DSD not initialized - call nativeInit first");
+        return JNI_FALSE;
+    }
+    
+    const char* path = env->GetStringUTFChars(devicePath, nullptr);
+    if (!path) {
+        LOGE("Failed to get device path string");
+        return JNI_FALSE;
+    }
+    
+    // Configure opts for Android native USB mode
+    g_opts->rtl_android_usb_fd = fd;
+    strncpy(g_opts->rtl_android_usb_path, path, sizeof(g_opts->rtl_android_usb_path) - 1);
+    g_opts->rtl_android_usb_path[sizeof(g_opts->rtl_android_usb_path) - 1] = '\0';
+    
+    // Set RTL input parameters
+    g_opts->rtlsdr_center_freq = (uint32_t)frequency;
+    g_opts->rtl_gain_value = gain;
+    g_opts->rtlsdr_ppm_error = ppm;
+    g_opts->rtltcp_enabled = 0;  // Not using rtl_tcp
+    g_opts->audio_in_type = AUDIO_IN_RTL;
+    
+    // DSP parameters (same as rtl_tcp mode)
+    g_opts->rtl_dsp_bw_khz = 48;  // Full bandwidth
+    g_opts->rtl_squelch_level = 0;  // Disabled - wide open for digital
+    g_opts->rtl_volume_multiplier = 2;
+    
+    // Set up audio_in_dev string for RTL mode (not rtltcp)
+    snprintf(g_opts->audio_in_dev, sizeof(g_opts->audio_in_dev), "rtl");
+    
+    // Audio output configuration
+    snprintf(g_opts->audio_out_dev, sizeof(g_opts->audio_out_dev), "android");
+    g_opts->audio_out_type = 0;
+    g_opts->audio_out = 1;
+    g_opts->pulse_digi_rate_out = 8000;
+    g_opts->pulse_digi_out_channels = 1;
+    
+    // Enable P25 trunk following
+    g_opts->p25_trunk = 1;
+    
+    env->ReleaseStringUTFChars(devicePath, path);
+    
+    LOGI("Native USB RTL-SDR configured: path=%s, fd=%d", 
+         g_opts->rtl_android_usb_path, g_opts->rtl_android_usb_fd);
+    
+    return JNI_TRUE;
+}
+
+/**
+ * Close native RTL-SDR USB device
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeCloseRtlSdrUsb(
+    JNIEnv* env,
+    jobject thiz) {
+    
+    LOGI("Clearing native RTL-SDR USB configuration");
+    
+    if (g_opts) {
+        g_opts->rtl_android_usb_fd = -1;
+        g_opts->rtl_android_usb_path[0] = '\0';
+    }
+}
+
+/**
+ * Set frequency on native RTL-SDR device (updates opts for next engine run)
+ */
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetRtlSdrFrequency(
+    JNIEnv* env,
+    jobject thiz,
+    jlong frequency) {
+    
+    if (!g_opts) {
+        LOGE("DSD not initialized");
+        return JNI_FALSE;
+    }
+    
+    g_opts->rtlsdr_center_freq = (uint32_t)frequency;
+    LOGI("Set frequency to %lld Hz in opts", (long long)frequency);
+    return JNI_TRUE;
+}
+
+/**
+ * Set gain on native RTL-SDR device (updates opts for next engine run)
+ */
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetRtlSdrGain(
+    JNIEnv* env,
+    jobject thiz,
+    jint gain) {
+    
+    if (!g_opts) {
+        LOGE("DSD not initialized");
+        return JNI_FALSE;
+    }
+    
+    g_opts->rtl_gain_value = gain;
+    LOGI("Set gain to %d tenths dB in opts", gain);
+    return JNI_TRUE;
+}
+
+#else // !NATIVE_RTLSDR_ENABLED
+
+// Stub implementations when native RTL-SDR is not enabled
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeIsRtlSdrSupported(
+    JNIEnv* env,
+    jobject thiz) {
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeOpenRtlSdrUsb(
+    JNIEnv* env,
+    jobject thiz,
+    jint fd,
+    jstring devicePath,
+    jlong frequency,
+    jint sampleRate,
+    jint gain,
+    jint ppm) {
+    LOGE("Native RTL-SDR support not compiled");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeCloseRtlSdrUsb(
+    JNIEnv* env,
+    jobject thiz) {
+    LOGE("Native RTL-SDR support not compiled");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetRtlSdrFrequency(
+    JNIEnv* env,
+    jobject thiz,
+    jlong frequency) {
+    LOGE("Native RTL-SDR support not compiled");
+    return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetRtlSdrGain(
+    JNIEnv* env,
+    jobject thiz,
+    jint gain) {
+    LOGE("Native RTL-SDR support not compiled");
+    return JNI_FALSE;
+}
+
+#endif // NATIVE_RTLSDR_ENABLED

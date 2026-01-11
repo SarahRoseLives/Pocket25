@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../services/settings_service.dart';
-import '../services/rtl_tcp_service.dart';
+import '../services/native_rtlsdr_service.dart';
 
 class ManualConfigurationScreen extends StatefulWidget {
   final SettingsService settings;
@@ -29,30 +28,53 @@ class ManualConfigurationScreen extends StatefulWidget {
 class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
   late TextEditingController _remoteHostController;
   late TextEditingController _remotePortController;
-  late TextEditingController _localPortController;
   late TextEditingController _freqController;
   late TextEditingController _gainController;
   late TextEditingController _ppmController;
   bool _isConfiguring = false;
-  bool _driverInstalled = false;
+  bool _nativeRtlSdrSupported = false;
+  List<RtlSdrUsbDevice> _nativeUsbDevices = [];
+  bool _isRunning = false;
 
   @override
   void initState() {
     super.initState();
     _remoteHostController = TextEditingController(text: widget.settings.remoteHost);
     _remotePortController = TextEditingController(text: widget.settings.remotePort.toString());
-    _localPortController = TextEditingController(text: widget.settings.localPort.toString());
     _freqController = TextEditingController(text: widget.settings.frequency.toString());
     _gainController = TextEditingController(text: widget.settings.gain.toString());
     _ppmController = TextEditingController(text: widget.settings.ppm.toString());
-    _checkDriverInstalled();
+    _isRunning = widget.isRunning;
+    _checkNativeRtlSdrSupport();
   }
-
-  Future<void> _checkDriverInstalled() async {
-    final installed = await RtlTcpService.isDriverInstalled();
+  
+  @override
+  void didUpdateWidget(ManualConfigurationScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isRunning != widget.isRunning) {
+      setState(() {
+        _isRunning = widget.isRunning;
+      });
+    }
+  }
+  
+  Future<void> _checkNativeRtlSdrSupport() async {
+    final supported = await widget.dsdPlugin.isNativeRtlSdrSupported();
     if (mounted) {
       setState(() {
-        _driverInstalled = installed;
+        _nativeRtlSdrSupported = supported;
+      });
+    }
+    if (supported) {
+      await _refreshNativeDevices();
+    }
+  }
+  
+  Future<void> _refreshNativeDevices() async {
+    final devices = await NativeRtlSdrService.listDevices();
+    if (mounted) {
+      setState(() {
+        _nativeUsbDevices = devices;
       });
     }
   }
@@ -61,7 +83,6 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
   void dispose() {
     _remoteHostController.dispose();
     _remotePortController.dispose();
-    _localPortController.dispose();
     _freqController.dispose();
     _gainController.dispose();
     _ppmController.dispose();
@@ -80,40 +101,52 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
       widget.settings.updateGain(gain);
       widget.settings.updatePpm(ppm);
       
-      if (widget.settings.rtlSource == RtlSource.local) {
-        final port = int.parse(_localPortController.text);
-        widget.settings.updateLocalPort(port);
+      if (widget.settings.rtlSource == RtlSource.nativeUsb) {
+        // Native USB mode - open device and configure
+        widget.onStatusUpdate('Opening native USB RTL-SDR...');
         
-        widget.onStatusUpdate('Starting RTL-SDR driver...');
+        if (_nativeUsbDevices.isEmpty) {
+          throw Exception('No RTL-SDR USB devices found. Please connect a device.');
+        }
         
-        final started = await RtlTcpService.startDriver(
-          port: port,
+        final result = await NativeRtlSdrService.openDevice(_nativeUsbDevices.first.deviceName);
+        if (result == null) {
+          throw Exception('Failed to open RTL-SDR USB device. Please grant USB permission.');
+        }
+        
+        widget.settings.setNativeUsbDevice(
+          result['fd'] as int,
+          result['devicePath'] as String,
+        );
+        
+        widget.onStatusUpdate('Configuring native USB RTL-SDR...');
+        
+        final success = await widget.dsdPlugin.connectNativeUsb(
+          fd: result['fd'] as int,
+          devicePath: result['devicePath'] as String,
+          freqHz: widget.settings.frequencyHz,
           sampleRate: widget.settings.sampleRate,
-          frequency: widget.settings.frequencyHz,
-          gain: gain,
+          gain: gain * 10, // Convert to tenths of dB
           ppm: ppm,
         );
         
-        if (!started) {
-          throw Exception('Failed to start RTL-SDR driver. Make sure it is installed.');
+        if (!success) {
+          throw Exception('Failed to configure native RTL-SDR');
         }
-        
-        await Future.delayed(const Duration(milliseconds: 500));
-        
-        widget.onStatusUpdate('Connecting to local RTL-SDR...');
       } else {
+        // Remote mode
         final host = _remoteHostController.text;
         final port = int.parse(_remotePortController.text);
         widget.settings.updateRemoteHost(host);
         widget.settings.updateRemotePort(port);
         widget.onStatusUpdate('Connecting to $host:$port...');
+        
+        await widget.dsdPlugin.connect(
+          widget.settings.effectiveHost,
+          widget.settings.effectivePort,
+          widget.settings.frequencyHz,
+        );
       }
-      
-      await widget.dsdPlugin.connect(
-        widget.settings.effectiveHost,
-        widget.settings.effectivePort,
-        widget.settings.frequencyHz,
-      );
       
       await widget.dsdPlugin.setAudioEnabled(widget.settings.audioEnabled);
       
@@ -221,6 +254,10 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
   }
 
   Widget _buildSourceCard() {
+    final nativeDeviceStatus = _nativeUsbDevices.isEmpty 
+        ? 'No devices found' 
+        : '${_nativeUsbDevices.length} device(s) found';
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -231,7 +268,7 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
         const SizedBox(height: 8),
         RadioGroup<RtlSource>(
           groupValue: widget.settings.rtlSource,
-          onChanged: widget.isRunning ? (RtlSource? value) {} : (RtlSource? value) {
+          onChanged: _isRunning ? (RtlSource? value) {} : (RtlSource? value) {
             if (value != null) {
               widget.settings.setRtlSource(value);
               setState(() {});
@@ -239,33 +276,47 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
           },
           child: Column(
             children: [
-              RadioListTile<RtlSource>(
-                title: const Text('Local USB RTL-SDR', style: TextStyle(fontSize: 14)),
-                subtitle: Text(
-                  _driverInstalled ? 'Driver installed' : 'Driver not found',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _driverInstalled ? Colors.green : Colors.orange,
+              // Native USB option (recommended)
+              if (_nativeRtlSdrSupported) ...[
+                RadioListTile<RtlSource>(
+                  title: Row(
+                    children: [
+                      const Text('Native USB RTL-SDR', style: TextStyle(fontSize: 14)),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green[700],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'Recommended',
+                          style: TextStyle(fontSize: 9, color: Colors.white),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                value: RtlSource.local,
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-              ),
-              if (!_driverInstalled)
-                Padding(
-                  padding: const EdgeInsets.only(left: 40),
-                  child: TextButton.icon(
-                    icon: const Icon(Icons.download, size: 16),
-                    label: const Text('Install Driver', style: TextStyle(fontSize: 12)),
-                    onPressed: () async {
-                      final uri = Uri.parse(RtlTcpService.playStoreUrl);
-                      if (await canLaunchUrl(uri)) {
-                        await launchUrl(uri, mode: LaunchMode.externalApplication);
-                      }
-                    },
+                  subtitle: Text(
+                    nativeDeviceStatus,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _nativeUsbDevices.isNotEmpty ? Colors.green : Colors.orange,
+                    ),
                   ),
+                  value: RtlSource.nativeUsb,
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
                 ),
+                if (widget.settings.rtlSource == RtlSource.nativeUsb)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 40),
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('Refresh Devices', style: TextStyle(fontSize: 12)),
+                      onPressed: _refreshNativeDevices,
+                    ),
+                  ),
+              ],
               RadioListTile<RtlSource>(
                 title: const Text('Remote RTL-TCP Server', style: TextStyle(fontSize: 14)),
                 subtitle: const Text('Connect over network', style: TextStyle(fontSize: 11)),
@@ -281,63 +332,117 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
   }
 
   Widget _buildConnectionCard() {
-    final isLocal = widget.settings.rtlSource == RtlSource.local;
+    final isNativeUsb = widget.settings.rtlSource == RtlSource.nativeUsb;
     
+    // For native USB, show device info instead of connection settings
+    if (isNativeUsb) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'USB Device',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          if (_nativeUsbDevices.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[900]?.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange[700]!),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.usb_off, color: Colors.orange, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'No RTL-SDR devices connected. Please connect a device via USB OTG.',
+                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ...List.generate(_nativeUsbDevices.length, (index) {
+              final device = _nativeUsbDevices[index];
+              return Container(
+                margin: EdgeInsets.only(bottom: index < _nativeUsbDevices.length - 1 ? 8 : 0),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green[900]?.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green[700]!),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.usb, color: Colors.green, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            device.productName,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          Text(
+                            'VID: 0x${device.vendorId.toRadixString(16).padLeft(4, '0')} PID: 0x${device.productId.toRadixString(16).padLeft(4, '0')}',
+                            style: TextStyle(fontSize: 11, color: Colors.grey[400]),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      device.hasPermission ? Icons.check_circle : Icons.warning,
+                      color: device.hasPermission ? Colors.green : Colors.orange,
+                      size: 18,
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      );
+    }
+    
+    // Remote connection settings
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          isLocal ? 'Local Connection' : 'Remote Connection',
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        const Text(
+          'Remote Connection',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 8),
-        if (!isLocal) ...[
-          TextField(
-            controller: _remoteHostController,
-            decoration: const InputDecoration(
-              labelText: 'Host',
-              hintText: '192.168.1.240',
-              border: OutlineInputBorder(),
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            style: const TextStyle(fontSize: 14),
-            enabled: !widget.isRunning,
+        TextField(
+          controller: _remoteHostController,
+          decoration: const InputDecoration(
+            labelText: 'Host',
+            hintText: '192.168.1.240',
+            border: OutlineInputBorder(),
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _remotePortController,
-            decoration: const InputDecoration(
-              labelText: 'Port',
-              hintText: '1234',
-              border: OutlineInputBorder(),
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            style: const TextStyle(fontSize: 14),
-            keyboardType: TextInputType.number,
-            enabled: !widget.isRunning,
+          style: const TextStyle(fontSize: 14),
+          enabled: !_isRunning,
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _remotePortController,
+          decoration: const InputDecoration(
+            labelText: 'Port',
+            hintText: '1234',
+            border: OutlineInputBorder(),
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           ),
-        ] else ...[
-          TextField(
-            controller: _localPortController,
-            decoration: const InputDecoration(
-              labelText: 'Local Port',
-              hintText: '1234',
-              border: OutlineInputBorder(),
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            style: const TextStyle(fontSize: 14),
-            keyboardType: TextInputType.number,
-            enabled: !widget.isRunning,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Will connect to 127.0.0.1:\${_localPortController.text}',
-            style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-          ),
-        ],
+          style: const TextStyle(fontSize: 14),
+          keyboardType: TextInputType.number,
+          enabled: !_isRunning,
+        ),
       ],
     );
   }
@@ -358,7 +463,7 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
           ),
           style: const TextStyle(fontSize: 14),
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          enabled: !widget.isRunning,
+          enabled: !_isRunning,
         ),
         const SizedBox(height: 10),
         Row(
@@ -374,7 +479,7 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
                 ),
                 style: const TextStyle(fontSize: 14),
                 keyboardType: TextInputType.number,
-                enabled: !widget.isRunning,
+                enabled: !_isRunning,
               ),
             ),
             const SizedBox(width: 10),
@@ -389,7 +494,7 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
                 ),
                 style: const TextStyle(fontSize: 14),
                 keyboardType: TextInputType.number,
-                enabled: !widget.isRunning,
+                enabled: !_isRunning,
               ),
             ),
           ],
@@ -398,7 +503,7 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
         SwitchListTile(
           title: const Text('Audio Output', style: TextStyle(fontSize: 14)),
           value: widget.settings.audioEnabled,
-          onChanged: widget.isRunning ? null : (value) {
+          onChanged: _isRunning ? null : (value) {
             widget.settings.setAudioEnabled(value);
             setState(() {});
           },
@@ -416,7 +521,7 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: widget.isRunning || _isConfiguring ? null : _applySettings,
+            onPressed: _isRunning || _isConfiguring ? null : _applySettings,
             icon: _isConfiguring
                 ? const SizedBox(
                     width: 16,
@@ -436,7 +541,10 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
           children: [
             Expanded(
               child: ElevatedButton.icon(
-                onPressed: widget.isRunning ? null : widget.onStart,
+                onPressed: _isRunning ? null : () {
+                  widget.onStart();
+                  setState(() => _isRunning = true);
+                },
                 icon: const Icon(Icons.play_arrow, size: 18),
                 label: const Text('Start'),
                 style: ElevatedButton.styleFrom(
@@ -448,7 +556,10 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
             const SizedBox(width: 10),
             Expanded(
               child: ElevatedButton.icon(
-                onPressed: widget.isRunning ? widget.onStop : null,
+                onPressed: _isRunning ? () {
+                  widget.onStop();
+                  setState(() => _isRunning = false);
+                } : null,
                 icon: const Icon(Icons.stop, size: 18),
                 label: const Text('Stop'),
                 style: ElevatedButton.styleFrom(
@@ -469,19 +580,21 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
           child: Row(
             children: [
               Icon(
-                widget.isRunning ? Icons.radio : Icons.radio_button_unchecked,
+                _isRunning ? Icons.radio : Icons.radio_button_unchecked,
                 size: 16,
-                color: widget.isRunning ? Colors.green : Colors.grey,
+                color: _isRunning ? Colors.green : Colors.grey,
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  widget.isRunning 
-                      ? 'Scanner running - \${widget.settings.effectiveHost}:\${widget.settings.effectivePort}'
+                  _isRunning 
+                      ? widget.settings.rtlSource == RtlSource.nativeUsb
+                          ? 'Scanner running - Native USB'
+                          : 'Scanner running - \${widget.settings.effectiveHost}:\${widget.settings.effectivePort}'
                       : 'Scanner stopped',
                   style: TextStyle(
                     fontSize: 11,
-                    color: widget.isRunning ? Colors.green[300] : Colors.grey,
+                    color: _isRunning ? Colors.green[300] : Colors.grey,
                   ),
                 ),
               ),

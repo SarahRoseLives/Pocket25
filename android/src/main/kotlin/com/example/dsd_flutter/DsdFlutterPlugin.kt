@@ -111,6 +111,11 @@ class DsdFlutterPlugin :
     private external fun nativeStop()
     private external fun nativeCleanup()
     private external fun nativeSetAudioEnabled(enabled: Boolean)
+    private external fun nativeIsRtlSdrSupported(): Boolean
+    private external fun nativeOpenRtlSdrUsb(fd: Int, devicePath: String, frequency: Long, sampleRate: Int, gain: Int, ppm: Int): Boolean
+    private external fun nativeCloseRtlSdrUsb()
+    private external fun nativeSetRtlSdrFrequency(frequency: Long): Boolean
+    private external fun nativeSetRtlSdrGain(gain: Int): Boolean
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
@@ -156,6 +161,31 @@ class DsdFlutterPlugin :
                 val enabled = call.argument<Boolean>("enabled") ?: true
                 nativeSetAudioEnabled(enabled)
                 result.success(null)
+            }
+            "isNativeRtlSdrSupported" -> {
+                result.success(nativeIsRtlSdrSupported())
+            }
+            "connectNativeUsb" -> {
+                val fd = call.argument<Int>("fd") ?: -1
+                val devicePath = call.argument<String>("devicePath") ?: ""
+                val freqHz = call.argument<Number>("freqHz")?.toLong() ?: 771181250L
+                val sampleRate = call.argument<Int>("sampleRate") ?: 2400000
+                val gain = call.argument<Int>("gain") ?: 0
+                val ppm = call.argument<Int>("ppm") ?: 0
+                val success = nativeOpenRtlSdrUsb(fd, devicePath, freqHz, sampleRate, gain, ppm)
+                result.success(success)
+            }
+            "disconnectNativeUsb" -> {
+                nativeCloseRtlSdrUsb()
+                result.success(null)
+            }
+            "setNativeRtlFrequency" -> {
+                val freqHz = call.argument<Number>("freqHz")?.toLong() ?: 0L
+                result.success(nativeSetRtlSdrFrequency(freqHz))
+            }
+            "setNativeRtlGain" -> {
+                val gain = call.argument<Int>("gain") ?: 0
+                result.success(nativeSetRtlSdrGain(gain))
             }
             else -> {
                 result.notImplemented()

@@ -1142,6 +1142,58 @@ rtl_device_create(int dev_index, struct input_ring_state* input_ring, int combin
     return dev;
 }
 
+#ifdef __ANDROID__
+#include <rtl-sdr-android.h>
+#endif
+
+struct rtl_device*
+rtl_device_create_usb_fd(int fd, const char* device_path, struct input_ring_state* input_ring, 
+                         int combine_rotate_enabled_param) {
+#ifdef __ANDROID__
+    if (!input_ring || fd < 0 || !device_path) {
+        return NULL;
+    }
+
+    struct rtl_device* dev = static_cast<rtl_device*>(calloc(1, sizeof(struct rtl_device)));
+    if (!dev) {
+        return NULL;
+    }
+
+    dev->dev_index = -1;  // Not using index-based open
+    dev->input_ring = input_ring;
+    dev->thread_started = 0;
+    dev->mute = 0;
+    dev->combine_rotate_enabled = combine_rotate_enabled_param;
+    dev->backend = 0;  // USB backend
+    dev->sockfd = DSD_INVALID_SOCKET;
+    dev->host[0] = '\0';
+    dev->port = 0;
+    dev->run.store(0);
+    dev->agc_mode = 1;
+    dev->testmode_on = 0;
+    dev->rtl_xtal_hz = 0;
+    dev->tuner_xtal_hz = 0;
+    dev->if_gain_count = 0;
+
+    int r = rtlsdr_open2(&dev->dev, fd, device_path);
+    if (r < 0) {
+        fprintf(stderr, "Failed to open rtlsdr device via USB FD %d at %s (error %d).\n", 
+                fd, device_path, r);
+        free(dev);
+        return NULL;
+    }
+
+    return dev;
+#else
+    (void)fd;
+    (void)device_path;
+    (void)input_ring;
+    (void)combine_rotate_enabled_param;
+    fprintf(stderr, "rtl_device_create_usb_fd: Android-only function\n");
+    return NULL;
+#endif
+}
+
 struct rtl_device*
 rtl_device_create_tcp(const char* host, int port, struct input_ring_state* input_ring, int combine_rotate_enabled_param,
                       int autotune_enabled) {

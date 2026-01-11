@@ -14,10 +14,26 @@ set(DSD_USE_PORTAUDIO OFF CACHE BOOL "" FORCE)
 set(MBELIB_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(MBELIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
-# Enable RTL-SDR support (for rtl_tcp) using stub headers
-set(RTLSDR_FOUND TRUE CACHE BOOL "" FORCE)
-set(RTLSDR_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/stubs" CACHE PATH "" FORCE)
-set(RTLSDR_LIBRARIES "" CACHE STRING "" FORCE)
+# Option to enable native USB RTL-SDR support (vs rtl_tcp only)
+option(ENABLE_NATIVE_RTLSDR "Enable native USB RTL-SDR support" ON)
+
+if(ENABLE_NATIVE_RTLSDR)
+    # Build real librtlsdr-android with libusb
+    add_subdirectory(librtlsdr-android EXCLUDE_FROM_ALL)
+    
+    # Point dsd-neo to the real rtlsdr headers
+    set(RTLSDR_FOUND TRUE CACHE BOOL "" FORCE)
+    set(RTLSDR_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/librtlsdr-android/include" CACHE PATH "" FORCE)
+    set(RTLSDR_LIBRARIES "rtlsdr_android" CACHE STRING "" FORCE)
+    
+    # Global compile definition so all targets (including dsd-neo) know native rtlsdr is available
+    add_compile_definitions(NATIVE_RTLSDR_ENABLED=1)
+else()
+    # Use stub headers for rtl_tcp-only mode
+    set(RTLSDR_FOUND TRUE CACHE BOOL "" FORCE)
+    set(RTLSDR_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/stubs" CACHE PATH "" FORCE)
+    set(RTLSDR_LIBRARIES "" CACHE STRING "" FORCE)
+endif()
 
 # Add mbelib-neo first
 add_subdirectory(mbelib-neo EXCLUDE_FROM_ALL)
@@ -87,6 +103,11 @@ target_link_libraries(dsd_flutter
     mbe-shared
     log  # Android logging
 )
+
+# Link native rtlsdr if enabled
+if(ENABLE_NATIVE_RTLSDR)
+    target_link_libraries(dsd_flutter rtlsdr_android)
+endif()
 
 target_include_directories(dsd_flutter PRIVATE
     dsd-neo/include

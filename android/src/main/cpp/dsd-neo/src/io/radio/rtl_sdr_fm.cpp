@@ -2487,7 +2487,27 @@ dsd_rtl_stream_open(dsd_opts* opts) {
             LOG_INFO("Using rtl_tcp source %s:%d.\n", opts->rtltcp_hostname, opts->rtltcp_portno);
             rtl_device_print_offset_capability(rtl_device_handle);
         }
+#ifdef __ANDROID__
+    } else if (opts && opts->rtl_android_usb_fd >= 0 && opts->rtl_android_usb_path[0] != '\0') {
+        /* Android native USB mode: use file descriptor from Android UsbDeviceConnection */
+        LOG_INFO("Attempting Android native USB: fd=%d, path=%s\n", 
+                 opts->rtl_android_usb_fd, opts->rtl_android_usb_path);
+        rtl_device_handle = rtl_device_create_usb_fd(opts->rtl_android_usb_fd, opts->rtl_android_usb_path,
+                                                     &input_ring, combine_rotate_enabled);
+        if (!rtl_device_handle) {
+            LOG_ERROR("Failed to open RTL-SDR via Android USB FD %d at %s.\n", 
+                      opts->rtl_android_usb_fd, opts->rtl_android_usb_path);
+            return -1;
+        } else {
+            LOG_INFO("Using Android native USB RTL-SDR at %s (fd=%d).\n", 
+                     opts->rtl_android_usb_path, opts->rtl_android_usb_fd);
+            rtl_device_print_offset_capability(rtl_device_handle);
+        }
+#endif
     } else {
+        LOG_INFO("Using standard rtlsdr device open (not TCP, not Android USB). android_fd=%d, android_path_empty=%d\n",
+                 opts ? opts->rtl_android_usb_fd : -999,
+                 opts ? (opts->rtl_android_usb_path[0] == '\0' ? 1 : 0) : -1);
         rtl_device_handle = rtl_device_create(dongle.dev_index, &input_ring, combine_rotate_enabled);
         if (!rtl_device_handle) {
             LOG_ERROR("Failed to open rtlsdr device %d.\n", dongle.dev_index);

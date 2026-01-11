@@ -43,6 +43,39 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('setAudioEnabled() has not been implemented.');
   }
   
+  /// Check if native RTL-SDR USB support is available
+  Future<bool> isNativeRtlSdrSupported() {
+    throw UnimplementedError('isNativeRtlSdrSupported() has not been implemented.');
+  }
+  
+  /// Connect using native USB RTL-SDR (Android only)
+  /// Returns true on success
+  Future<bool> connectNativeUsb({
+    required int fd,
+    required String devicePath,
+    required int freqHz,
+    int sampleRate = 2400000,
+    int gain = 0,
+    int ppm = 0,
+  }) {
+    throw UnimplementedError('connectNativeUsb() has not been implemented.');
+  }
+  
+  /// Disconnect native USB RTL-SDR
+  Future<void> disconnectNativeUsb() {
+    throw UnimplementedError('disconnectNativeUsb() has not been implemented.');
+  }
+  
+  /// Set frequency on native RTL-SDR
+  Future<bool> setNativeRtlFrequency(int freqHz) {
+    throw UnimplementedError('setNativeRtlFrequency() has not been implemented.');
+  }
+  
+  /// Set gain on native RTL-SDR (in tenths of dB)
+  Future<bool> setNativeRtlGain(int gain) {
+    throw UnimplementedError('setNativeRtlGain() has not been implemented.');
+  }
+  
   /// Stream of log output strings from DSD
   Stream<String> get outputStream {
     throw UnimplementedError('outputStream has not been implemented.');

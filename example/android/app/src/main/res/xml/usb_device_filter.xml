@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- RTL-SDR USB device VID/PID combinations -->
+    
+    <!-- Realtek RTL2832U (most common RTL-SDR dongles) -->
+    <usb-device vendor-id="0x0bda" product-id="0x2832" />
+    <usb-device vendor-id="0x0bda" product-id="0x2838" />
+    
+    <!-- RTL-SDR Blog V3/V4 -->
+    <usb-device vendor-id="0x0bda" product-id="0x2838" />
+    
+    <!-- Generic RTL2832U -->
+    <usb-device vendor-id="3034" product-id="10296" /> <!-- 0x0bda / 0x2838 in decimal -->
+    <usb-device vendor-id="3034" product-id="10290" /> <!-- 0x0bda / 0x2832 in decimal -->
+    
+    <!-- Nooelec NESDR variants -->
+    <usb-device vendor-id="0x0bda" product-id="0x2838" />
+    
+    <!-- FlightAware Pro Stick -->
+    <usb-device vendor-id="0x0bda" product-id="0x2838" />
+    
+    <!-- Additional known RTL-SDR VID/PIDs -->
+    <usb-device vendor-id="0x1f4d" product-id="0xb803" /> <!-- Afatech AF9015 -->
+    <usb-device vendor-id="0x1f4d" product-id="0xc803" /> <!-- Afatech AF9015 -->
+    <usb-device vendor-id="0x1b80" product-id="0xd3a4" /> <!-- Afatech -->
+    <usb-device vendor-id="0x1b80" product-id="0xd393" /> <!-- Mygica T230 -->
+    <usb-device vendor-id="0x1b80" product-id="0xd394" /> <!-- Mygica T230C -->
+    <usb-device vendor-id="0x1b80" product-id="0xd395" /> <!-- Mygica T230C2 -->
+    <usb-device vendor-id="0x1b80" product-id="0xd397" /> <!-- Mygica T230A -->
+    <usb-device vendor-id="0x1b80" product-id="0xd398" /> <!-- Mygica T230C -->
+    <usb-device vendor-id="0x1b80" product-id="0xd39d" /> <!-- Mygica T230 -->
+    <usb-device vendor-id="0x1d19" product-id="0x1101" /> <!-- Dexatek DK DVB-T Dongle -->
+    <usb-device vendor-id="0x1d19" product-id="0x1102" /> <!-- Dexatek DK mini DVB-T Dongle -->
+    <usb-device vendor-id="0x1d19" product-id="0x1103" /> <!-- Dexatek Technology Ltd. -->
+    <usb-device vendor-id="0x0458" product-id="0x707f" /> <!-- Genius TVGo DVB-T03 -->
+    <usb-device vendor-id="0x1b80" product-id="0xd3a8" /> <!-- SVEON STV27 DVB-T USB & FM -->
+    <usb-device vendor-id="0x15f4" product-id="0x0131" /> <!-- HanfTek DAB+FM+DVB-T -->
+</resources>

@@ -22,6 +22,48 @@ class DsdFlutter {
     return DsdFlutterPlatform.instance.setAudioEnabled(enabled);
   }
   
+  /// Check if native RTL-SDR USB support is available
+  Future<bool> isNativeRtlSdrSupported() {
+    return DsdFlutterPlatform.instance.isNativeRtlSdrSupported();
+  }
+  
+  /// Connect using native USB RTL-SDR (Android only)
+  /// fd: USB file descriptor from Android UsbDeviceConnection
+  /// devicePath: USB device path
+  /// Returns true on success
+  Future<bool> connectNativeUsb({
+    required int fd,
+    required String devicePath,
+    required int freqHz,
+    int sampleRate = 2400000,
+    int gain = 0,
+    int ppm = 0,
+  }) {
+    return DsdFlutterPlatform.instance.connectNativeUsb(
+      fd: fd,
+      devicePath: devicePath,
+      freqHz: freqHz,
+      sampleRate: sampleRate,
+      gain: gain,
+      ppm: ppm,
+    );
+  }
+  
+  /// Disconnect native USB RTL-SDR
+  Future<void> disconnectNativeUsb() {
+    return DsdFlutterPlatform.instance.disconnectNativeUsb();
+  }
+  
+  /// Set frequency on native RTL-SDR
+  Future<bool> setNativeRtlFrequency(int freqHz) {
+    return DsdFlutterPlatform.instance.setNativeRtlFrequency(freqHz);
+  }
+  
+  /// Set gain on native RTL-SDR (in tenths of dB, e.g. 480 = 48.0 dB)
+  Future<bool> setNativeRtlGain(int gain) {
+    return DsdFlutterPlatform.instance.setNativeRtlGain(gain);
+  }
+  
   /// Stream of log output strings from DSD
   Stream<String> get outputStream {
     return DsdFlutterPlatform.instance.outputStream;

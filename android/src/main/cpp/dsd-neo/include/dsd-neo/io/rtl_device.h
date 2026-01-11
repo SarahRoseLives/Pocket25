@@ -37,6 +37,23 @@ struct rtl_device;
 struct rtl_device* rtl_device_create(int dev_index, struct input_ring_state* input_ring, int combine_rotate_enabled);
 
 /**
+ * @brief Create and initialize an RTL-SDR device from an Android USB file descriptor.
+ *
+ * This function is used on Android to open an RTL-SDR device using a file descriptor
+ * obtained from UsbDeviceConnection.getFileDescriptor(). This bypasses normal USB
+ * enumeration and uses the Android USB Host API permission system.
+ *
+ * @param fd USB file descriptor from Android UsbDeviceConnection.
+ * @param device_path USB device path from Android UsbDevice.getDeviceName().
+ * @param input_ring Pointer to input ring for incoming I/Q data.
+ * @param combine_rotate_enabled Whether to use combined rotate+widen when offset tuning is disabled.
+ * @return Pointer to rtl_device handle, or NULL on failure.
+ */
+struct rtl_device* rtl_device_create_usb_fd(int fd, const char* device_path, 
+                                            struct input_ring_state* input_ring, 
+                                            int combine_rotate_enabled);
+
+/**
  * @brief Create and initialize a remote RTL-SDR stream via rtl_tcp.
  *
  * Connects to an rtl_tcp server (default port 1234) and configures the

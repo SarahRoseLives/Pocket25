@@ -136,6 +136,9 @@ struct dsd_opts {
     /* Generic input volume multiplier for non-RTL inputs (Pulse/WAV/TCP/UDP). */
     int input_volume_multiplier;
     int rtl_udp_port;
+    /* Android native USB RTL-SDR support */
+    int rtl_android_usb_fd;        /* USB file descriptor from Android UsbDeviceConnection (-1 if not used) */
+    char rtl_android_usb_path[256]; /* USB device path from Android UsbDevice.getDeviceName() */
     /* Base DSP bandwidth for RTL path in kHz (4,6,8,12,16,24,48). Influences capture rate planning.
        Not the hardware tuner IF bandwidth. */
     int rtl_dsp_bw_khz;

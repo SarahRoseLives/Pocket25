@@ -55,6 +55,53 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
   }
   
   @override
+  Future<bool> isNativeRtlSdrSupported() async {
+    final result = await methodChannel.invokeMethod<bool>('isNativeRtlSdrSupported');
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> connectNativeUsb({
+    required int fd,
+    required String devicePath,
+    required int freqHz,
+    int sampleRate = 2400000,
+    int gain = 0,
+    int ppm = 0,
+  }) async {
+    final result = await methodChannel.invokeMethod<bool>('connectNativeUsb', {
+      'fd': fd,
+      'devicePath': devicePath,
+      'freqHz': freqHz,
+      'sampleRate': sampleRate,
+      'gain': gain,
+      'ppm': ppm,
+    });
+    return result ?? false;
+  }
+  
+  @override
+  Future<void> disconnectNativeUsb() async {
+    await methodChannel.invokeMethod('disconnectNativeUsb');
+  }
+  
+  @override
+  Future<bool> setNativeRtlFrequency(int freqHz) async {
+    final result = await methodChannel.invokeMethod<bool>('setNativeRtlFrequency', {
+      'freqHz': freqHz,
+    });
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> setNativeRtlGain(int gain) async {
+    final result = await methodChannel.invokeMethod<bool>('setNativeRtlGain', {
+      'gain': gain,
+    });
+    return result ?? false;
+  }
+  
+  @override
   Stream<String> get outputStream {
     _outputStream ??= _eventChannel
         .receiveBroadcastStream()

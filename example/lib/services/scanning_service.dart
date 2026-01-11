@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import '../services/settings_service.dart';
-import '../services/rtl_tcp_service.dart';
+import '../services/native_rtlsdr_service.dart';
 import 'database_service.dart';
 
 enum ScanningState {
@@ -135,35 +135,51 @@ class ScanningService extends ChangeNotifier {
       // Update frequency in settings
       _settingsService.updateFrequency(_currentFrequency!);
       
-      // If using local RTL-SDR, restart the driver with new frequency
-      // (Necessary to avoid rtl_tcp timeouts when changing frequencies)
-      if (_settingsService.rtlSource == RtlSource.local) {
-        if (kDebugMode) {
-          print('Restarting RTL-TCP driver with frequency: ${_settingsService.frequencyHz} Hz');
+      if (_settingsService.rtlSource == RtlSource.nativeUsb) {
+        // Native USB mode - use built-in RTL-SDR support
+        if (!_settingsService.hasNativeUsbDevice) {
+          // Try to open first available RTL-SDR device
+          final devices = await NativeRtlSdrService.listDevices();
+          if (devices.isEmpty) {
+            throw Exception('No RTL-SDR USB devices found');
+          }
+          
+          final result = await NativeRtlSdrService.openDevice(devices.first.deviceName);
+          if (result == null) {
+            throw Exception('Failed to open RTL-SDR USB device');
+          }
+          
+          _settingsService.setNativeUsbDevice(
+            result['fd'] as int,
+            result['devicePath'] as String,
+          );
         }
         
-        final started = await RtlTcpService.startDriver(
-          port: _settingsService.localPort,
+        if (kDebugMode) {
+          print('Using native USB RTL-SDR: fd=${_settingsService.nativeUsbFd}, freq=${_settingsService.frequencyHz} Hz');
+        }
+        
+        // Configure native USB connection
+        final success = await _dsdPlugin.connectNativeUsb(
+          fd: _settingsService.nativeUsbFd,
+          devicePath: _settingsService.nativeUsbPath,
+          freqHz: _settingsService.frequencyHz,
           sampleRate: _settingsService.sampleRate,
-          frequency: _settingsService.frequencyHz,
-          gain: _settingsService.gain,
+          gain: _settingsService.gain * 10, // Convert to tenths of dB
           ppm: _settingsService.ppm,
         );
         
-        if (!started) {
-          throw Exception('Failed to restart RTL-SDR driver');
+        if (!success) {
+          throw Exception('Failed to configure native RTL-SDR');
         }
-        
-        // Give driver time to initialize
-        await Future.delayed(const Duration(milliseconds: 500));
+      } else {
+        // Remote rtl_tcp mode
+        await _dsdPlugin.connect(
+          _settingsService.effectiveHost,
+          _settingsService.effectivePort,
+          _settingsService.frequencyHz,
+        );
       }
-      
-      // Reconnect DSD plugin with new frequency
-      await _dsdPlugin.connect(
-        _settingsService.effectiveHost,
-        _settingsService.effectivePort,
-        _settingsService.frequencyHz,
-      );
       
       // Start scanning with new frequency
       _onStart();
@@ -215,6 +231,14 @@ class ScanningService extends ChangeNotifier {
     _lockCheckTimer?.cancel();
     _lockCheckTimer = null;
     _onStop();
+    
+    // Clean up native USB if used
+    if (_settingsService.rtlSource == RtlSource.nativeUsb && _settingsService.hasNativeUsbDevice) {
+      await _dsdPlugin.disconnectNativeUsb();
+      await NativeRtlSdrService.closeDevice();
+      _settingsService.clearNativeUsbDevice();
+    }
+    
     _currentSiteId = null;
     _currentSiteName = null;
     _currentFrequency = null;
