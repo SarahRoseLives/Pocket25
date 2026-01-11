@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import 'screens/scanner_screen.dart';
@@ -8,6 +9,7 @@ import 'screens/settings_screen.dart';
 import 'screens/site_details_screen.dart';
 import 'services/settings_service.dart';
 import 'services/scanning_service.dart';
+import 'services/database_service.dart';
 import 'models/scanner_activity.dart';
 import 'models/site_details.dart';
 
@@ -55,6 +57,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   final _dsdFlutterPlugin = DsdFlutter();
   final _settingsService = SettingsService();
+  final _db = DatabaseService();
   late final ScanningService _scanningService;
   final List<String> _logLines = [];
   final List<CallEvent> _recentCalls = [];
@@ -119,37 +122,69 @@ class _MainScreenState extends State<MainScreen> {
 
   void _listenToCallEvents() {
     _callEventSubscription = _dsdFlutterPlugin.callEventStream.listen((eventMap) {
-      final callEvent = CallEvent.fromMap(eventMap);
-      
-      setState(() {
-        switch (callEvent.eventType) {
-          case CallEventType.callStart:
-          case CallEventType.callUpdate:
-            // Update current call
-            _currentCall = callEvent;
-            
-            // Add to recent calls (avoid duplicates for same TG within short time)
-            final existingIdx = _recentCalls.indexWhere(
-              (c) => c.talkgroup == callEvent.talkgroup && 
-                     DateTime.now().difference(c.timestamp).inSeconds < 5
-            );
-            if (existingIdx < 0) {
-              _recentCalls.insert(0, callEvent);
-              // Keep only last 50 calls
-              if (_recentCalls.length > 50) {
-                _recentCalls.removeLast();
-              }
-            }
-            break;
-            
-          case CallEventType.callEnd:
-            // Clear current call if it matches
-            if (_currentCall?.talkgroup == callEvent.talkgroup) {
-              _currentCall = null;
-            }
-            break;
+      _handleCallEvent(eventMap);
+    });
+  }
+
+  Future<void> _handleCallEvent(Map<String, dynamic> eventMap) async {
+    // Look up talkgroup name if we have a current site
+    if (_scanningService.currentSiteId != null && eventMap['talkgroup'] != null) {
+      final talkgroup = eventMap['talkgroup'] as int;
+      if (talkgroup > 0 && (eventMap['groupName'] == null || (eventMap['groupName'] as String).isEmpty)) {
+        if (kDebugMode) {
+          print('Looking up talkgroup name for TG $talkgroup, site ${_scanningService.currentSiteId}');
         }
-      });
+        final systemId = await _db.getSystemIdForSite(_scanningService.currentSiteId!);
+        if (kDebugMode) {
+          print('System ID: $systemId');
+        }
+        if (systemId != null) {
+          final tgName = await _db.getTalkgroupName(systemId, talkgroup);
+          if (kDebugMode) {
+            print('Talkgroup name lookup result: $tgName');
+          }
+          if (tgName != null && tgName.isNotEmpty) {
+            eventMap['groupName'] = tgName;
+            if (kDebugMode) {
+              print('Set groupName to: $tgName');
+            }
+          }
+        }
+      }
+    }
+    
+    final callEvent = CallEvent.fromMap(eventMap);
+    
+    if (!mounted) return;
+    
+    setState(() {
+      switch (callEvent.eventType) {
+        case CallEventType.callStart:
+        case CallEventType.callUpdate:
+          // Update current call
+          _currentCall = callEvent;
+          
+          // Add to recent calls (avoid duplicates for same TG within short time)
+          final existingIdx = _recentCalls.indexWhere(
+            (c) => c.talkgroup == callEvent.talkgroup && 
+                   DateTime.now().difference(c.timestamp).inSeconds < 5
+          );
+          if (existingIdx < 0) {
+            _recentCalls.insert(0, callEvent);
+            // Keep only last 50 calls
+            if (_recentCalls.length > 50) {
+              _recentCalls.removeLast();
+            }
+          }
+          break;
+          
+        case CallEventType.callEnd:
+          // Clear current call if it matches
+          if (_currentCall?.talkgroup == callEvent.talkgroup) {
+            _currentCall = null;
+          }
+          break;
+      }
     });
   }
 

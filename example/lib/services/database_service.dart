@@ -120,6 +120,22 @@ class DatabaseService {
     );
   }
 
+  Future<int?> getSystemIdForSite(int siteId) async {
+    final db = await database;
+    final results = await db.query(
+      'sites',
+      columns: ['system_id'],
+      where: 'site_id = ?',
+      whereArgs: [siteId],
+      limit: 1,
+    );
+    
+    if (results.isNotEmpty) {
+      return results.first['system_id'] as int?;
+    }
+    return null;
+  }
+
   Future<List<Map<String, dynamic>>> getControlChannels(int siteId) async {
     final db = await database;
     return await db.query(
@@ -138,6 +154,22 @@ class DatabaseService {
       whereArgs: [systemId],
       orderBy: 'tg_decimal',
     );
+  }
+
+  Future<String?> getTalkgroupName(int systemId, int tgDecimal) async {
+    final db = await database;
+    final results = await db.query(
+      'talkgroups',
+      columns: ['tg_name'],
+      where: 'system_id = ? AND tg_decimal = ?',
+      whereArgs: [systemId, tgDecimal],
+      limit: 1,
+    );
+    
+    if (results.isNotEmpty) {
+      return results.first['tg_name'] as String?;
+    }
+    return null;
   }
 
   Future<void> deleteSystem(int systemId) async {

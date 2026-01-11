@@ -386,19 +386,20 @@ $authXml
     }
     
     if (result != null) {
-      var talkgroupData = result['talkgroup'];
+      // The result should directly contain 'item' which can be:
+      // - A single Map (one talkgroup)
+      // - A List of Maps (multiple talkgroups)
+      var talkgroupData = result['item'];
       
       if (kDebugMode) {
-        print('talkgroup value type: ${talkgroupData.runtimeType}');
-      }
-      
-      // Handle nested 'item' structure
-      if (talkgroupData is Map && talkgroupData.containsKey('item')) {
-        talkgroupData = talkgroupData['item'];
-        if (kDebugMode) {
-          print('Extracted item from talkgroup: ${talkgroupData.runtimeType}');
+        print('talkgroup data type: ${talkgroupData.runtimeType}');
+        if (talkgroupData == null) {
+          print('WARNING: result[item] is null - checking for alternative keys');
+          print('Available keys in result: ${result.keys}');
         }
       }
+      
+      // No need for nested 'item' structure handling since we're already at the right level
       
       final talkgroups = <List<dynamic>>[];
       
@@ -435,34 +436,48 @@ $authXml
         print('Creating system database entries for system ID: $systemId');
       }
       
+      // Insert/update system first
+      await _db.insertSystem(systemId, systemName);
+      
+      // Try to fetch sites (may fail if system already imported)
       final sitesInfo = await getTrsSites(systemId);
-      if (sitesInfo == null || sitesInfo.isEmpty) {
-        errorMessage = "No sites found for this trunked system.";
-        isLoading = false;
-        notifyListeners();
-        return;
+      if (sitesInfo != null && sitesInfo.isNotEmpty) {
+        if (kDebugMode) {
+          print('Found ${sitesInfo.length} sites');
+        }
+        
+        // Insert sites and control channels
+        for (final site in sitesInfo) {
+          await _insertSiteToDb(systemId, site);
+        }
+      } else {
+        if (kDebugMode) {
+          print('No sites returned (may already be imported or API error)');
+        }
       }
       
+      // Always try to fetch talkgroups, even if sites failed
       if (kDebugMode) {
-        print('Found ${sitesInfo.length} sites');
+        print('Fetching talkgroups for system $systemId...');
       }
       
       final talkgroupsInfo = await getTrsTalkgroups(systemId);
       if (kDebugMode) {
         print('Found ${talkgroupsInfo?.length ?? 0} talkgroups');
-      }
-
-      // Insert system
-      await _db.insertSystem(systemId, systemName);
-
-      // Insert sites and control channels
-      for (final site in sitesInfo) {
-        await _insertSiteToDb(systemId, site);
+        if (talkgroupsInfo == null) {
+          print('WARNING: getTrsTalkgroups returned null - no talkgroup data available');
+        } else if (talkgroupsInfo.isEmpty) {
+          print('WARNING: getTrsTalkgroups returned empty list - no unencrypted talkgroups found');
+        }
       }
 
       // Insert talkgroups
       if (talkgroupsInfo != null && talkgroupsInfo.isNotEmpty) {
         await _clearAndInsertTalkgroups(systemId, talkgroupsInfo);
+      } else {
+        if (kDebugMode) {
+          print('No talkgroups to import');
+        }
       }
 
       isLoading = false;
@@ -542,11 +557,22 @@ $authXml
   Future<void> _clearAndInsertTalkgroups(int systemId, List<List<dynamic>> talkgroups) async {
     await _db.clearTalkgroups(systemId);
     
+    if (kDebugMode) {
+      print('Inserting ${talkgroups.length} talkgroups for system $systemId');
+    }
+    
     for (final tg in talkgroups) {
+      final tgDecimal = int.parse(tg[0].toString());
+      final tgName = tg[1].toString();
+      
+      if (kDebugMode && talkgroups.indexOf(tg) < 5) {
+        print('  TG $tgDecimal: $tgName');
+      }
+      
       await _db.insertTalkgroup(
         systemId,
-        int.parse(tg[0].toString()),
-        tg[1].toString(),
+        tgDecimal,
+        tgName,
       );
     }
     
