@@ -49,6 +49,9 @@ dependencies:
   
   # SQLite database
   sqflite: ^2.3.0
+  
+  # Provider for state management
+  provider: ^6.1.0
 
 dev_dependencies:
   integration_test:

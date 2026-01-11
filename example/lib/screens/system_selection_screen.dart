@@ -1,14 +1,17 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../services/database_service.dart';
+import '../services/scanning_service.dart';
 import 'site_selection_screen.dart';
 
 class SystemSelectionScreen extends StatefulWidget {
   final Function(int siteId, String siteName) onSystemSelected;
+  final ScanningService scanningService;
   
   const SystemSelectionScreen({
     super.key,
     required this.onSystemSelected,
+    required this.scanningService,
   });
 
   @override
@@ -181,6 +184,7 @@ class _SystemSelectionScreenState extends State<SystemSelectionScreen> {
                     systemName: system.systemName,
                     sites: system.sites,
                     onSiteSelected: widget.onSystemSelected,
+                    scanningService: widget.scanningService,
                   ),
                 ),
               );

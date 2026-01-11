@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'system_selection_screen.dart';
+import '../services/scanning_service.dart';
 
 class SiteSelectionScreen extends StatefulWidget {
   final String systemId;
   final String systemName;
   final List<SiteInfo> sites;
   final Function(int siteId, String siteName) onSiteSelected;
+  final ScanningService scanningService;
 
   const SiteSelectionScreen({
     super.key,
@@ -15,6 +17,7 @@ class SiteSelectionScreen extends StatefulWidget {
     required this.systemName,
     required this.sites,
     required this.onSiteSelected,
+    required this.scanningService,
   });
 
   @override
@@ -31,6 +34,21 @@ class _SiteSelectionScreenState extends State<SiteSelectionScreen> {
     super.initState();
     _sortedSites = List.from(widget.sites);
     _getCurrentLocation();
+    // Listen to scanningService changes
+    widget.scanningService.addListener(_onScanningServiceChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.scanningService.removeListener(_onScanningServiceChanged);
+    super.dispose();
+  }
+
+  void _onScanningServiceChanged() {
+    // Rebuild when scanningService changes
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _getCurrentLocation() async {
@@ -157,6 +175,35 @@ class _SiteSelectionScreenState extends State<SiteSelectionScreen> {
       appBar: AppBar(
         title: Text('Sites - ${widget.systemName}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          // GPS Hopping Toggle
+          Row(
+            children: [
+              Icon(
+                Icons.gps_fixed,
+                size: 20,
+                color: widget.scanningService.gpsHoppingEnabled ? Colors.green : Colors.grey,
+              ),
+              const SizedBox(width: 4),
+              Switch(
+                value: widget.scanningService.gpsHoppingEnabled,
+                onChanged: (value) {
+                  widget.scanningService.enableGpsHopping(value);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(value 
+                        ? 'GPS Site Hopping enabled - will auto-switch to nearest site'
+                        : 'GPS Site Hopping disabled'),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                },
+                activeColor: Colors.green,
+              ),
+              const SizedBox(width: 8),
+            ],
+          ),
+        ],
       ),
       backgroundColor: Colors.grey[900],
       body: SafeArea(

@@ -71,6 +71,7 @@ class SettingsScreen extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => ImportSettingsScreen(
+                      scanningService: scanningService,
                       onSiteSelected: (siteId, siteName) async {
                         // Start scanning the selected site
                         await scanningService.startScanning(siteId, siteName);

@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import '../models/scanner_activity.dart';
+import '../services/scanning_service.dart';
 
 class ScannerScreen extends StatelessWidget {
   final CallEvent? currentCall;
   final List<CallEvent> recentCalls;
   final bool isRunning;
+  final ScanningService scanningService;
 
   const ScannerScreen({
     super.key,
     this.currentCall,
     required this.recentCalls,
     required this.isRunning,
+    required this.scanningService,
   });
 
   @override
@@ -92,6 +95,13 @@ class ScannerScreen extends StatelessWidget {
                 isRunning ? Colors.green : Colors.grey,
               ),
               const SizedBox(width: 6),
+              if (scanningService.gpsHoppingEnabled)
+                Row(
+                  children: [
+                    _buildStatusChip('GPS', Colors.blue),
+                    const SizedBox(width: 6),
+                  ],
+                ),
               if (call.isEmergency)
                 _buildStatusChip('EMERGENCY', Colors.red),
               if (call.isEncrypted)

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/settings_service.dart';
 import '../services/native_rtlsdr_service.dart';
 import 'database_service.dart';
@@ -22,14 +23,19 @@ class ScanningService extends ChangeNotifier {
   ScanningState _state = ScanningState.idle;
   int? _currentSiteId;
   String? _currentSiteName;
+  int? _currentSystemId;
   double? _currentFrequency;
   int _currentChannelIndex = 0;
   List<Map<String, dynamic>> _controlChannels = [];
+  List<Map<String, dynamic>> _allSystemSites = [];
   Timer? _lockCheckTimer;
   StreamSubscription? _outputSubscription;
+  StreamSubscription<Position>? _positionSubscription;
   
   bool _hasLock = false;
   DateTime? _lastActivityTime;
+  bool _gpsHoppingEnabled = false;
+  Position? _lastPosition;
   
   ScanningState get state => _state;
   int? get currentSiteId => _currentSiteId;
@@ -38,6 +44,8 @@ class ScanningService extends ChangeNotifier {
   int get currentChannelIndex => _currentChannelIndex;
   int get totalChannels => _controlChannels.length;
   bool get hasLock => _hasLock;
+  bool get gpsHoppingEnabled => _gpsHoppingEnabled;
+  Position? get lastPosition => _lastPosition;
 
   ScanningService(
     this._dsdPlugin,
@@ -68,7 +76,7 @@ class ScanningService extends ChangeNotifier {
     });
   }
 
-  Future<void> startScanning(int siteId, String siteName) async {
+  Future<void> startScanning(int siteId, String siteName, {int? systemId}) async {
     if (_state != ScanningState.idle) {
       await stopScanning();
     }
@@ -79,6 +87,21 @@ class ScanningService extends ChangeNotifier {
       _currentChannelIndex = 0;
       _hasLock = false;
       _lastActivityTime = null;
+      
+      // Get system ID if not provided
+      if (systemId != null) {
+        _currentSystemId = systemId;
+      } else {
+        _currentSystemId = await _db.getSystemIdForSite(siteId);
+      }
+      
+      // Load all sites for GPS hopping
+      if (_currentSystemId != null) {
+        _allSystemSites = await _db.getSitesBySystem(_currentSystemId!);
+        if (kDebugMode) {
+          print('Loaded ${_allSystemSites.length} sites for system $_currentSystemId');
+        }
+      }
       
       // Load control channels for this site
       _controlChannels = await _db.getControlChannels(siteId);
@@ -100,6 +123,11 @@ class ScanningService extends ChangeNotifier {
       
       // Start lock check timer
       _lockCheckTimer = Timer.periodic(const Duration(seconds: 5), _checkLockStatus);
+      
+      // Start GPS tracking if hopping is enabled
+      if (_gpsHoppingEnabled) {
+        _startGpsTracking();
+      }
       
     } catch (e) {
       _setState(ScanningState.error);
@@ -281,6 +309,7 @@ class ScanningService extends ChangeNotifier {
   Future<void> stopScanning() async {
     _lockCheckTimer?.cancel();
     _lockCheckTimer = null;
+    _stopGpsTracking();
     _onStop();
     
     // Clean up native USB if used
@@ -309,10 +338,103 @@ class ScanningService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void enableGpsHopping(bool enabled) {
+    _gpsHoppingEnabled = enabled;
+    
+    if (enabled && _state != ScanningState.idle) {
+      _startGpsTracking();
+    } else {
+      _stopGpsTracking();
+    }
+    
+    notifyListeners();
+    
+    if (kDebugMode) {
+      print('GPS hopping ${enabled ? "enabled" : "disabled"}');
+    }
+  }
+
+  void _startGpsTracking() {
+    _stopGpsTracking(); // Cancel existing subscription
+    
+    if (kDebugMode) {
+      print('Starting GPS tracking for site hopping');
+    }
+    
+    const locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 1000, // Update every 1km
+    );
+    
+    _positionSubscription = Geolocator.getPositionStream(
+      locationSettings: locationSettings,
+    ).listen((Position position) {
+      _lastPosition = position;
+      _checkNearestSite(position);
+      notifyListeners();
+    });
+  }
+
+  void _stopGpsTracking() {
+    _positionSubscription?.cancel();
+    _positionSubscription = null;
+  }
+
+  Future<void> _checkNearestSite(Position position) async {
+    if (_allSystemSites.isEmpty || _currentSiteId == null) return;
+    
+    try {
+      // Find nearest site
+      Map<String, dynamic>? nearestSite;
+      double nearestDistance = double.infinity;
+      
+      for (final site in _allSystemSites) {
+        final lat = site['latitude'] as double?;
+        final lon = site['longitude'] as double?;
+        
+        if (lat != null && lon != null) {
+          final distance = Geolocator.distanceBetween(
+            position.latitude,
+            position.longitude,
+            lat,
+            lon,
+          );
+          
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestSite = site;
+          }
+        }
+      }
+      
+      // Switch to nearest site if different from current and within reasonable range
+      if (nearestSite != null) {
+        final nearestSiteId = nearestSite['site_id'] as int;
+        final nearestSiteName = nearestSite['site_name'] as String;
+        
+        // Only switch if:
+        // 1. It's a different site
+        // 2. Distance is reasonable (< 100km)
+        if (nearestSiteId != _currentSiteId && nearestDistance < 100000) {
+          if (kDebugMode) {
+            print('GPS Hopping: Switching from $_currentSiteName to $nearestSiteName (${(nearestDistance / 1000).toStringAsFixed(1)} km away)');
+          }
+          
+          await startScanning(nearestSiteId, nearestSiteName, systemId: _currentSystemId);
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error checking nearest site: $e');
+      }
+    }
+  }
+
   @override
   void dispose() {
     _lockCheckTimer?.cancel();
     _outputSubscription?.cancel();
+    _positionSubscription?.cancel();
     super.dispose();
   }
 }

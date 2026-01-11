@@ -251,6 +251,7 @@ class _MainScreenState extends State<MainScreen> {
           currentCall: _currentCall,
           recentCalls: _recentCalls,
           isRunning: _isRunning,
+          scanningService: _scanningService,
         );
       case 1:
         return LogScreen(

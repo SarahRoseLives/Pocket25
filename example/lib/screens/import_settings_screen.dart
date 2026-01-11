@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'radio_reference_import_screen.dart';
 import 'system_selection_screen.dart';
+import '../services/scanning_service.dart';
 
 class ImportSettingsScreen extends StatelessWidget {
   final Function(int siteId, String siteName) onSiteSelected;
+  final ScanningService scanningService;
   
   const ImportSettingsScreen({
     super.key,
     required this.onSiteSelected,
+    required this.scanningService,
   });
 
   @override
@@ -50,6 +53,7 @@ class ImportSettingsScreen extends StatelessWidget {
                   MaterialPageRoute(
                     builder: (context) => SystemSelectionScreen(
                       onSystemSelected: onSiteSelected,
+                      scanningService: scanningService,
                     ),
                   ),
                 );
