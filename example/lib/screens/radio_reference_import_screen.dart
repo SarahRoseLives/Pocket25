@@ -98,6 +98,7 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
 
   Future<void> _importSystem(Map<String, dynamic> system) async {
     final systemId = int.parse(system['sid'].toString());
+    final systemName = system['sName']?.toString() ?? 'System $systemId';
     
     showDialog(
       context: context,
@@ -113,7 +114,7 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
       ),
     );
     
-    await _service.createSystemTsvFiles(systemId);
+    await _service.createSystemTsvFiles(systemId, systemName);
     
     if (mounted) {
       Navigator.pop(context);

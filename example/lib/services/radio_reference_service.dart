@@ -426,7 +426,7 @@ $authXml
     return null;
   }
 
-  Future<void> createSystemTsvFiles(int systemId) async {
+  Future<void> createSystemTsvFiles(int systemId, String systemName) async {
     isLoading = true;
     errorMessage = null;
     notifyListeners();
@@ -453,7 +453,7 @@ $authXml
       }
 
       // Insert system
-      await _db.insertSystem(systemId, 'System $systemId');
+      await _db.insertSystem(systemId, systemName);
 
       // Insert sites and control channels
       for (final site in sitesInfo) {
