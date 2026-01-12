@@ -97,15 +97,44 @@ class SettingsScreen extends StatelessWidget {
               icon: Icons.info_outline,
               iconColor: Colors.cyan[300]!,
               onTap: () {
-                // TODO: Navigate to about screen
                 showAboutDialog(
                   context: context,
                   applicationName: 'Pocket25',
                   applicationVersion: '1.0.0',
-                  applicationLegalese: '© 2025 Pocket25',
+                  applicationLegalese: 'Licensed under GNU GPLv3',
                   children: const [
                     SizedBox(height: 16),
-                    Text('A P25 Phase 1 Scanner for Android'),
+                    Text(
+                      'Digital Voice Decoder for Android',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      'Developed by Sarah Rose',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'DSD integration supported by GitHub Copilot AI',
+                      style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic),
+                    ),
+                    SizedBox(height: 16),
+                    Divider(),
+                    SizedBox(height: 8),
+                    Text(
+                      'Credits:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'This application embeds DSD-Neo, a digital speech decoder capable of decoding multiple digital voice protocols.',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'DSD-Neo is based on DSD-FME (Digital Speech Decoder - Florida Man Edition), which in turn is based on the original DSD (Digital Speech Decoder) project.',
+                      style: TextStyle(fontSize: 12),
+                    ),
                   ],
                 );
               },
