@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'package:dsd_flutter/dsd_flutter.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'screens/scanner_screen.dart';
 import 'screens/log_screen.dart';
 import 'screens/settings_screen.dart';
@@ -20,6 +21,8 @@ void main() {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
+  // Enable wakelock to keep screen on
+  WakelockPlus.enable();
   runApp(const Pocket25App());
 }
 

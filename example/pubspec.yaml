@@ -52,6 +52,9 @@ dependencies:
   
   # Provider for state management
   provider: ^6.1.0
+  
+  # Wakelock to keep screen on
+  wakelock_plus: ^1.2.0
 
 dev_dependencies:
   integration_test:
