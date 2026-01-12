@@ -1,6 +1,6 @@
 # Pocket25 - Mobile P25 Digital Radio Decoder
 
-**Pocket25** is an Android application designed primarily for decoding **APCO Project 25 (P25)** trunked and conventional radio systems. Built on the powerful [DSD-Neo](https://github.com/lwvmobile/dsd-fme) decoder engine, it brings professional-grade digital radio monitoring to your mobile device.
+**Pocket25** is an Android application designed primarily for decoding **APCO Project 25 (P25)** trunked and conventional radio systems. Built on the powerful [DSD-Neo](https://github.com/arancormonk/dsd-fme) decoder engine, it brings professional-grade digital radio monitoring to your mobile device.
 
 ## 🎯 Primary Focus: P25 Systems
 
