@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -288,6 +289,279 @@ $authXml
     });
   }
 
+  Future<Map<String, dynamic>?> getCountyByCoordinates(double lat, double lon) async {
+    if (!(isLoggedIn && username != null && password != null)) {
+      errorMessage = "Please login first.";
+      notifyListeners();
+      return null;
+    }
+    
+    if (kDebugMode) {
+      print('=== Looking up location for coordinates: $lat, $lon ===');
+    }
+    
+    try {
+      // Get all countries
+      final countries = await getCountryList();
+      if (countries == null) return null;
+      
+      // Determine country based on coordinates
+      // USA: roughly 24-50°N, 125-66°W
+      // Canada: roughly 41-83°N, 141-52°W
+      final country = countries.firstWhere(
+        (c) {
+          final name = c['countryName'].toString().toLowerCase();
+          if (lat > 50) {
+            return name.contains('canada');
+          } else if (lat > 24 && lon > -125 && lon < -66) {
+            return name.contains('united states');
+          }
+          return name.contains('united states'); // default to US
+        },
+        orElse: () => countries.first,
+      );
+      
+      if (kDebugMode) {
+        print('Selected country: ${country['countryName']}');
+      }
+      
+      final countryId = int.parse(country['coid'].toString());
+      final countryInfo = await getCountryInfo(countryId);
+      
+      if (countryInfo == null || countryInfo['stateList'] == null) return null;
+      
+      var stateList = countryInfo['stateList'];
+      var items = stateList is Map ? stateList['item'] : stateList;
+      
+      List<Map<String, dynamic>> states;
+      if (items is List) {
+        states = items.map((s) => Map<String, dynamic>.from(s)).toList();
+      } else if (items is Map) {
+        states = [Map<String, dynamic>.from(items)];
+      } else {
+        return null;
+      }
+      
+      if (kDebugMode) {
+        print('Found ${states.length} states/provinces');
+      }
+      
+      // Optimize: use state code mapping to narrow down search
+      final targetState = _guessStateFromCoordinates(lat, lon);
+      
+      // Try the guessed state first
+      if (targetState != null) {
+        final state = states.where((s) => s['stateCode']?.toString().toUpperCase() == targetState).firstOrNull;
+        if (state != null) {
+          if (kDebugMode) {
+            print('Trying guessed state: ${state['stateName']}');
+          }
+          
+          final result = await _findClosestCountyInState(int.parse(state['stid'].toString()), lat, lon);
+          if (result != null) return result;
+        }
+      }
+      
+      // If guess failed, check all states (but limit to reasonable distance)
+      Map<String, dynamic>? closestCounty;
+      double closestDistance = double.infinity;
+      
+      for (final state in states) {
+        final stateId = int.parse(state['stid'].toString());
+        
+        if (kDebugMode) {
+          print('Checking state: ${state['stateName']}');
+        }
+        
+        final result = await _findClosestCountyInState(stateId, lat, lon);
+        if (result != null) {
+          final countyLat = result['lat'] != null ? double.tryParse(result['lat'].toString()) : null;
+          final countyLon = result['lon'] != null ? double.tryParse(result['lon'].toString()) : null;
+          
+          if (countyLat != null && countyLon != null) {
+            final distance = _calculateDistance(lat, lon, countyLat, countyLon);
+            
+            if (distance < closestDistance) {
+              closestDistance = distance;
+              closestCounty = result;
+              
+              // If we found something within 100km, that's probably good enough
+              if (distance < 100) break;
+            }
+          }
+        }
+      }
+      
+      if (kDebugMode && closestCounty != null) {
+        print('Closest county: ${closestCounty['countyName']} at ${closestDistance.toStringAsFixed(2)} km');
+      }
+      
+      return closestCounty;
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error in getCountyByCoordinates: $e');
+      }
+      errorMessage = "Could not find location: $e";
+      notifyListeners();
+      return null;
+    }
+  }
+  
+  Future<Map<String, dynamic>?> _findClosestCountyInState(int stateId, double lat, double lon) async {
+    final stateInfo = await getStateInfo(stateId);
+    
+    if (stateInfo == null || stateInfo['countyList'] == null) return null;
+    
+    var countyList = stateInfo['countyList'];
+    var countyItems = countyList is Map ? countyList['item'] : countyList;
+    
+    List<Map<String, dynamic>> counties;
+    if (countyItems is List) {
+      counties = countyItems.map((c) => Map<String, dynamic>.from(c)).toList();
+    } else if (countyItems is Map) {
+      counties = [Map<String, dynamic>.from(countyItems)];
+    } else {
+      return null;
+    }
+    
+    Map<String, dynamic>? closestCounty;
+    double closestDistance = double.infinity;
+    
+    // Sample some counties to find closest (checking all would be too slow)
+    final sampleSize = counties.length > 10 ? 10 : counties.length;
+    for (int i = 0; i < sampleSize; i++) {
+      final county = counties[i];
+      final ctid = county['ctid']?.toString();
+      if (ctid == null) continue;
+      
+      final countyInfo = await getCountyInfo(ctid);
+      if (countyInfo == null) continue;
+      
+      final countyLat = countyInfo['lat'] != null ? double.tryParse(countyInfo['lat'].toString()) : null;
+      final countyLon = countyInfo['lon'] != null ? double.tryParse(countyInfo['lon'].toString()) : null;
+      
+      if (countyLat != null && countyLon != null) {
+        final distance = _calculateDistance(lat, lon, countyLat, countyLon);
+        
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestCounty = countyInfo;
+        }
+      }
+    }
+    
+    return closestCounty;
+  }
+  
+  String? _guessStateFromCoordinates(double lat, double lon) {
+    // Simple state code mapping based on rough coordinate ranges
+    // This is a heuristic to speed up search
+    
+    // California
+    if (lat >= 32.5 && lat <= 42 && lon >= -124.5 && lon <= -114) return 'CA';
+    // Texas
+    if (lat >= 25.8 && lat <= 36.5 && lon >= -106.6 && lon <= -93.5) return 'TX';
+    // Florida
+    if (lat >= 24.5 && lat <= 31 && lon >= -87.6 && lon <= -80) return 'FL';
+    // New York
+    if (lat >= 40.5 && lat <= 45 && lon >= -79.8 && lon <= -71.8) return 'NY';
+    // Pennsylvania
+    if (lat >= 39.7 && lat <= 42 && lon >= -80.5 && lon <= -74.7) return 'PA';
+    // Illinois
+    if (lat >= 37 && lat <= 42.5 && lon >= -91.5 && lon <= -87.5) return 'IL';
+    // Ohio
+    if (lat >= 38.4 && lat <= 42 && lon >= -84.8 && lon <= -80.5) return 'OH';
+    // Michigan
+    if (lat >= 41.7 && lat <= 48.3 && lon >= -90.4 && lon <= -82.4) return 'MI';
+    // Georgia
+    if (lat >= 30.4 && lat <= 35 && lon >= -85.6 && lon <= -80.8) return 'GA';
+    // North Carolina
+    if (lat >= 33.8 && lat <= 36.6 && lon >= -84.3 && lon <= -75.4) return 'NC';
+    // Virginia
+    if (lat >= 36.5 && lat <= 39.5 && lon >= -83.7 && lon <= -75.2) return 'VA';
+    // Washington
+    if (lat >= 45.5 && lat <= 49 && lon >= -124.8 && lon <= -116.9) return 'WA';
+    // Ontario
+    if (lat >= 41.7 && lat <= 56.9 && lon >= -95.2 && lon <= -74.3) return 'ON';
+    // Quebec
+    if (lat >= 45 && lat <= 62.6 && lon >= -79.8 && lon <= -57) return 'QC';
+    // British Columbia
+    if (lat >= 48.3 && lat <= 60 && lon >= -139 && lon <= -114.1) return 'BC';
+    
+    return null; // Unknown, will check all states
+  }
+  
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    // Haversine formula for distance between two coordinates
+    const double earthRadius = 6371; // km
+    
+    final dLat = _toRadians(lat2 - lat1);
+    final dLon = _toRadians(lon2 - lon1);
+    
+    final a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_toRadians(lat1)) * cos(_toRadians(lat2)) *
+        sin(dLon / 2) * sin(dLon / 2);
+    
+    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    
+    return earthRadius * c;
+  }
+  
+  double _toRadians(double degrees) {
+    return degrees * pi / 180;
+  }
+
+  Future<List<Map<String, dynamic>>?> getCountryList() async {
+    if (!(isLoggedIn && username != null && password != null)) {
+      errorMessage = "Please login first.";
+      notifyListeners();
+      return null;
+    }
+    final wsdlUrl = "http://api.radioreference.com/soap2/?wsdl&v=latest&s=rpc";
+    final authInfo = _buildAuthInfo(username!, password!);
+    final result = await _soapRequest(wsdlUrl, 'getCountryList', {
+      'authInfo': authInfo,
+    });
+    
+    if (result != null && result.containsKey('item')) {
+      var items = result['item'];
+      if (items is List) {
+        return items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      } else if (items is Map) {
+        return [Map<String, dynamic>.from(items)];
+      }
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> getCountryInfo(int countryId) async {
+    if (!(isLoggedIn && username != null && password != null)) {
+      errorMessage = "Please login first.";
+      notifyListeners();
+      return null;
+    }
+    final wsdlUrl = "http://api.radioreference.com/soap2/?wsdl&v=latest&s=rpc";
+    final authInfo = _buildAuthInfo(username!, password!);
+    return await _soapRequest(wsdlUrl, 'getCountryInfo', {
+      'coid': countryId,
+      'authInfo': authInfo,
+    });
+  }
+
+  Future<Map<String, dynamic>?> getStateInfo(int stateId) async {
+    if (!(isLoggedIn && username != null && password != null)) {
+      errorMessage = "Please login first.";
+      notifyListeners();
+      return null;
+    }
+    final wsdlUrl = "http://api.radioreference.com/soap2/?wsdl&v=latest&s=rpc";
+    final authInfo = _buildAuthInfo(username!, password!);
+    return await _soapRequest(wsdlUrl, 'getStateInfo', {
+      'stid': stateId,
+      'authInfo': authInfo,
+    });
+  }
+
   Future<Map<String, dynamic>?> getCountyInfo(String countyId) async {
     if (!(isLoggedIn && username != null && password != null)) {
       errorMessage = "Please login first.";
@@ -340,7 +614,7 @@ $authXml
       }
       
       if (siteData is List) {
-        final sites = (siteData as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        final sites = siteData.map((e) => Map<String, dynamic>.from(e as Map)).toList();
         if (kDebugMode) {
           print('=== Returning ${sites.length} sites from list ===');
         }

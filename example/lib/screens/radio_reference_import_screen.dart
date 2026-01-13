@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/radio_reference_service.dart';
 
 class RadioReferenceImportScreen extends StatefulWidget {
@@ -18,6 +19,26 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
   String? _countyName;
   List<Map<String, dynamic>>? _trunkedSystems;
   
+  // Country/State/County navigation
+  List<Map<String, dynamic>>? _countries;
+  List<Map<String, dynamic>>? _states;
+  List<Map<String, dynamic>>? _counties;
+  Map<String, dynamic>? _selectedCountry;
+  Map<String, dynamic>? _selectedState;
+  String _lookupMethod = 'gps'; // 'gps' or 'browse'
+  bool _isLoadingLocation = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    // Auto-load GPS location when logged in
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_service.isLoggedIn) {
+        _useGPSLocation();
+      }
+    });
+  }
+
   @override
   void dispose() {
     _usernameController.dispose();
@@ -47,22 +68,147 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
     }
   }
 
-  Future<void> _lookupZipcode() async {
-    if (_zipcodeController.text.isEmpty) {
-      _showError('Please enter a zipcode');
-      return;
+  Future<void> _useGPSLocation() async {
+    setState(() {
+      _isLoadingLocation = true;
+      _lookupMethod = 'gps';
+    });
+
+    try {
+      // Check location permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          throw Exception('Location permissions are denied');
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        throw Exception('Location permissions are permanently denied');
+      }
+
+      // Get current position
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 10),
+      );
+      
+      final result = await _service.getCountyByCoordinates(
+        position.latitude, 
+        position.longitude,
+      );
+      
+      if (result != null && result['ctid'] != null) {
+        setState(() {
+          _countyId = result['ctid'].toString();
+          _countyName = null;
+          _isLoadingLocation = false;
+        });
+        await _loadCountyInfo();
+      } else if (mounted) {
+        setState(() => _isLoadingLocation = false);
+        _showError('Could not find location information');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingLocation = false);
+        _showError('GPS location error: $e');
+      }
     }
-    
-    final result = await _service.getZipcodeInfo(_zipcodeController.text);
-    if (result != null && result['ctid'] != null) {
+  }
+  
+  Future<void> _loadNorthAmericanCountries() async {
+    final countries = await _service.getCountryList();
+    if (countries != null) {
+      // Filter to only USA and Canada
+      final northAmerica = countries.where((c) {
+        final name = c['countryName']?.toString().toLowerCase() ?? '';
+        return name.contains('united states') || name.contains('canada');
+      }).toList();
+      
       setState(() {
-        _countyId = result['ctid'].toString();
-        _countyName = null; // Will be loaded from county info
+        _countries = northAmerica;
+        _states = null;
+        _counties = null;
+        _selectedCountry = null;
+        _selectedState = null;
+        _lookupMethod = 'browse';
+        _countyId = null;
+        _countyName = null;
+        _trunkedSystems = null;
       });
-      await _loadCountyInfo();
     } else if (mounted) {
-      _showError('Could not find zipcode information');
+      _showError('Could not load countries');
     }
+  }
+  
+  Future<void> _selectCountry(Map<String, dynamic> country) async {
+    final countryId = int.parse(country['coid'].toString());
+    final result = await _service.getCountryInfo(countryId);
+    
+    if (result != null && result['stateList'] != null) {
+      var stateList = result['stateList'];
+      var items = stateList is Map ? stateList['item'] : stateList;
+      
+      List<Map<String, dynamic>> states;
+      if (items is List) {
+        states = items.map((s) => Map<String, dynamic>.from(s)).toList();
+      } else if (items is Map) {
+        states = [Map<String, dynamic>.from(items)];
+      } else {
+        states = [];
+      }
+      
+      setState(() {
+        _selectedCountry = country;
+        _states = states;
+        _counties = null;
+        _selectedState = null;
+        _countyId = null;
+        _countyName = null;
+        _trunkedSystems = null;
+      });
+    } else if (mounted) {
+      _showError('Could not load states/provinces for this country');
+    }
+  }
+  
+  Future<void> _selectState(Map<String, dynamic> state) async {
+    final stateId = int.parse(state['stid'].toString());
+    final result = await _service.getStateInfo(stateId);
+    
+    if (result != null && result['countyList'] != null) {
+      var countyList = result['countyList'];
+      var items = countyList is Map ? countyList['item'] : countyList;
+      
+      List<Map<String, dynamic>> counties;
+      if (items is List) {
+        counties = items.map((c) => Map<String, dynamic>.from(c)).toList();
+      } else if (items is Map) {
+        counties = [Map<String, dynamic>.from(items)];
+      } else {
+        counties = [];
+      }
+      
+      setState(() {
+        _selectedState = state;
+        _counties = counties;
+        _countyId = null;
+        _countyName = null;
+        _trunkedSystems = null;
+      });
+    } else if (mounted) {
+      _showError('Could not load counties/regions for this state');
+    }
+  }
+  
+  Future<void> _selectCounty(Map<String, dynamic> county) async {
+    setState(() {
+      _countyId = county['ctid'].toString();
+      _countyName = county['countyName']?.toString() ?? 'Unknown';
+    });
+    await _loadCountyInfo();
   }
 
   Future<void> _loadCountyInfo() async {
@@ -244,6 +390,12 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
                           _countyId = null;
                           _countyName = null;
                           _trunkedSystems = null;
+                          _countries = null;
+                          _states = null;
+                          _counties = null;
+                          _selectedCountry = null;
+                          _selectedState = null;
+                          _lookupMethod = 'gps';
                         });
                       },
                       child: const Text('Logout'),
@@ -262,40 +414,203 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text(
-                  'Enter Zipcode',
+                  'Lookup Method',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
-                      child: TextField(
-                        controller: _zipcodeController,
-                        decoration: const InputDecoration(
-                          labelText: 'Zipcode',
-                          border: OutlineInputBorder(),
+                      child: ElevatedButton.icon(
+                        onPressed: _isLoadingLocation ? null : _useGPSLocation,
+                        icon: _isLoadingLocation 
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.my_location),
+                        label: const Text('Use GPS Location'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _lookupMethod == 'gps' ? Colors.blue : Colors.grey[700],
+                          padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
-                        keyboardType: TextInputType.number,
                       ),
                     ),
                     const SizedBox(width: 12),
-                    ElevatedButton(
-                      onPressed: _service.isLoading ? null : _lookupZipcode,
-                      child: const Text('Lookup'),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _loadNorthAmericanCountries,
+                        icon: const Icon(Icons.public),
+                        label: const Text('Browse Location'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _lookupMethod == 'browse' ? Colors.blue : Colors.grey[700],
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
                     ),
                   ],
                 ),
-                if (_countyName != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    'County: $_countyName',
-                    style: const TextStyle(color: Colors.green),
-                  ),
-                ],
               ],
             ),
           ),
         ),
+        const SizedBox(height: 12),
+        if (_lookupMethod == 'browse') ...[
+          if (_countries != null && _selectedCountry == null)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Select Country',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    ..._countries!.map((country) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        tileColor: Colors.grey[800],
+                        leading: const Icon(Icons.flag, color: Colors.orange),
+                        title: Text(country['countryName'] ?? 'Unknown'),
+                        subtitle: Text('Code: ${country['countryCode'] ?? 'N/A'}'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _selectCountry(country),
+                      ),
+                    )),
+                  ],
+                ),
+              ),
+            ),
+          if (_states != null && _selectedState == null)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: () {
+                            setState(() {
+                              _selectedCountry = null;
+                              _states = null;
+                            });
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Select State/Province in ${_selectedCountry?['countryName']}',
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ..._states!.map((state) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        tileColor: Colors.grey[800],
+                        leading: const Icon(Icons.location_city, color: Colors.green),
+                        title: Text(state['stateName'] ?? 'Unknown'),
+                        subtitle: Text('Code: ${state['stateCode'] ?? 'N/A'}'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _selectState(state),
+                      ),
+                    )),
+                  ],
+                ),
+              ),
+            ),
+          if (_counties != null)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: () {
+                            setState(() {
+                              _selectedState = null;
+                              _counties = null;
+                            });
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Select County/Region in ${_selectedState?['stateName']}',
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ..._counties!.map((county) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        tileColor: Colors.grey[800],
+                        leading: const Icon(Icons.place, color: Colors.cyan),
+                        title: Text(county['countyName'] ?? county['countyHeader'] ?? 'Unknown'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _selectCounty(county),
+                      ),
+                    )),
+                  ],
+                ),
+              ),
+            ),
+        ],
+        if (_countyName != null && _lookupMethod == 'browse')
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Selected: $_countyName',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (_countyName != null && _lookupMethod == 'gps')
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(Icons.location_on, color: Colors.green),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'GPS Location: $_countyName',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: _useGPSLocation,
+                    tooltip: 'Refresh GPS location',
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (_trunkedSystems != null && _trunkedSystems!.isNotEmpty) ...[
           const SizedBox(height: 12),
           Card(
