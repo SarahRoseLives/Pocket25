@@ -66,6 +66,11 @@ Use **[rtl_tcp_echo](https://github.com/SarahRoseLives/rtl_tcp_echo)** to captur
 # 1. Sits between DSD-Neo and RTL_TCP
 # 2. Captures raw IQ samples to a .bin file
 # 3. Allows perfect playback for development/testing
+
+# Do the following:
+# 1. rtl_tcp -a 0.0.0.0
+# 2. rtl_tcp_echo -listen 0.0.0.0:1235 -record iq_recording.bin
+# 3. Run DSD-Neo as RTL_TCP port 1235
 ```
 
 **What I'm looking for:**
