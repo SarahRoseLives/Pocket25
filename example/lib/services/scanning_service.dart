@@ -391,25 +391,21 @@ class ScanningService extends ChangeNotifier {
           // Start the engine
           _onStart();
         } else {
-          // Device already open - just change frequency without restart
+          // Device already open - need to stop engine, let it clean up USB, then restart with new frequency
           if (kDebugMode) {
             print('Retuning native USB RTL-SDR to ${_settingsService.frequencyHz} Hz');
           }
           
-          // Update frequency in opts for next engine run
-          final success = await _dsdPlugin.setNativeRtlFrequency(_settingsService.frequencyHz);
-          if (!success) {
-            if (kDebugMode) {
-              print('Warning: Failed to set frequency via setNativeRtlFrequency');
-            }
-          }
+          // Clear our tracking of the USB device - engine will close it during stop
+          _settingsService.clearNativeUsbDevice();
           
-          // For now, we need to stop and restart to pick up the new frequency
-          // TODO: Implement live retuning in the engine
+          // Stop the engine - this will close the USB device internally
           _onStop();
-          await Future.delayed(const Duration(milliseconds: 300));
           
-          // Re-open USB device since stopping closes it
+          // Wait for engine to fully stop and release USB
+          await Future.delayed(const Duration(milliseconds: 500));
+          
+          // Re-open USB device with new frequency
           final devices = await NativeRtlSdrService.listDevices();
           if (devices.isEmpty) {
             throw Exception('No RTL-SDR USB devices found');
@@ -425,6 +421,10 @@ class ScanningService extends ChangeNotifier {
             result['devicePath'] as String,
           );
           
+          if (kDebugMode) {
+            print('Reopened native USB RTL-SDR: fd=${result['fd']}, path=${result['devicePath']}');
+          }
+          
           // Configure with new frequency
           final configSuccess = await _dsdPlugin.connectNativeUsb(
             fd: result['fd'] as int,
@@ -439,6 +439,7 @@ class ScanningService extends ChangeNotifier {
             throw Exception('Failed to configure native RTL-SDR');
           }
           
+          // Start engine with new configuration
           _onStart();
         }
       } else {
