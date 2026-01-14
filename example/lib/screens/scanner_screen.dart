@@ -82,13 +82,30 @@ class ScannerScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             
-            // Site information
+            // Site information and TSBK count in a row
             if (isRunning && scanningService.currentSiteName != null) ...[
-              _buildInfoRow(
-                'Site',
-                scanningService.currentSiteName!,
-                Icons.cell_tower,
-                Colors.cyan,
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildInfoRow(
+                      'Site',
+                      scanningService.currentSiteName!,
+                      Icons.cell_tower,
+                      Colors.cyan,
+                    ),
+                  ),
+                  if (scanningService.tsbkCount > 0) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildInfoRow(
+                        'TSBK',
+                        '${scanningService.tsbkCount}',
+                        Icons.swap_vert,
+                        Colors.teal,
+                      ),
+                    ),
+                  ],
+                ],
               ),
               const SizedBox(height: 12),
             ],
