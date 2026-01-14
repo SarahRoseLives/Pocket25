@@ -503,14 +503,14 @@ class ScanningService extends ChangeNotifier {
     _lockCheckTimer?.cancel();
     _lockCheckTimer = null;
     _stopGpsTracking();
-    _onStop();
     
-    // Clean up native USB if used
+    // Clear device tracking before stopping - engine will close USB during cleanup
     if (_settingsService.rtlSource == RtlSource.nativeUsb && _settingsService.hasNativeUsbDevice) {
-      await _dsdPlugin.disconnectNativeUsb();
-      await NativeRtlSdrService.closeDevice();
       _settingsService.clearNativeUsbDevice();
     }
+    
+    // Stop engine - it will handle closing USB device internally
+    _onStop();
     
     _currentSiteId = null;
     _currentSiteName = null;
