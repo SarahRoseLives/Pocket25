@@ -311,6 +311,7 @@ class _MainScreenState extends State<MainScreen> {
       case 2:
         return SiteDetailsScreen(
           siteDetails: _currentSiteDetails,
+          scanningService: _scanningService,
         );
       case 3:
         return SettingsScreen(

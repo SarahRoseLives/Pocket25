@@ -40,10 +40,17 @@ static jclass g_plugin_class = nullptr;
 static jmethodID g_send_output_method = nullptr;
 static jmethodID g_send_call_event_method = nullptr;
 static jmethodID g_send_site_event_method = nullptr;
+static jmethodID g_send_signal_event_method = nullptr;
 
 // Last known call state for change detection
 static int g_last_tg = 0;
 static int g_last_src = 0;
+
+// Last known signal state for change detection
+static unsigned int g_last_tsbk_ok = 0;
+static unsigned int g_last_tsbk_err = 0;
+static int g_last_synctype = -1;
+static int g_last_carrier = 0;
 
 // ============================================================================
 // Talkgroup Filtering (Whitelist/Blacklist)
@@ -239,6 +246,43 @@ static void send_site_event_to_flutter(
     }
 }
 
+// Send signal quality metrics to Flutter
+static void send_signal_event_to_flutter(
+    unsigned int tsbkOk,
+    unsigned int tsbkErr,
+    int synctype,
+    bool hasCarrier,
+    bool hasSync
+) {
+    if (!g_jvm || !g_plugin_class || !g_send_signal_event_method) return;
+    
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    
+    int status = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if (g_jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+            attached = true;
+        } else {
+            return;
+        }
+    } else if (status != JNI_OK) {
+        return;
+    }
+    
+    env->CallStaticVoidMethod(g_plugin_class, g_send_signal_event_method,
+        (jint)tsbkOk,
+        (jint)tsbkErr,
+        (jint)synctype,
+        (jboolean)hasCarrier,
+        (jboolean)hasSync
+    );
+    
+    if (attached) {
+        g_jvm->DetachCurrentThread();
+    }
+}
+
 // Poll thread - checks state for call and site changes
 static void* poll_thread_func(void* arg) {
     LOGI("Poll thread started");
@@ -350,6 +394,34 @@ static void* poll_thread_func(void* arg) {
             g_last_nac = nac;
         }
         
+        // Check for signal quality changes (using state fields instead of parsing logs)
+        unsigned int tsbk_ok = g_state->p25_p1_fec_ok;
+        unsigned int tsbk_err = g_state->p25_p1_fec_err;
+        int synctype = g_state->synctype;
+        int carrier = g_state->carrier;
+        
+        // Send signal updates if metrics changed
+        if (tsbk_ok != g_last_tsbk_ok || tsbk_err != g_last_tsbk_err || 
+            synctype != g_last_synctype || carrier != g_last_carrier) {
+            
+            // Check if we have P25 sync (synctype 0 or 1 for P25 P1, 35/36 for P25 P2)
+            bool hasSync = (synctype == 0 || synctype == 1 || synctype == 35 || synctype == 36);
+            bool hasCarrier = (carrier != 0);
+            
+            send_signal_event_to_flutter(
+                tsbk_ok,
+                tsbk_err,
+                synctype,
+                hasCarrier,
+                hasSync
+            );
+            
+            g_last_tsbk_ok = tsbk_ok;
+            g_last_tsbk_err = tsbk_err;
+            g_last_synctype = synctype;
+            g_last_carrier = carrier;
+        }
+        
         // Poll every 100ms
         usleep(100000);
     }
@@ -423,6 +495,8 @@ JNI_OnLoad(JavaVM* vm, void* reserved) {
                 "(IIIILjava/lang/String;ZZLjava/lang/String;IDLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
             g_send_site_event_method = env->GetStaticMethodID(g_plugin_class, "sendSiteEvent",
                 "(JJJJI)V");
+            g_send_signal_event_method = env->GetStaticMethodID(g_plugin_class, "sendSignalEvent",
+                "(IIIZZ)V");
             env->DeleteLocalRef(localClass);
             LOGI("Flutter callbacks initialized");
         } else {

@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import '../models/site_details.dart';
+import '../services/scanning_service.dart';
 
 class SiteDetailsScreen extends StatelessWidget {
   final SiteDetails? siteDetails;
+  final ScanningService? scanningService;
   
   const SiteDetailsScreen({
     super.key,
     this.siteDetails,
+    this.scanningService,
   });
 
   @override
@@ -64,6 +67,14 @@ class SiteDetailsScreen extends StatelessWidget {
                           '${siteDetails!.siteId}'),
                       _buildInfoRow('RFSS ID', siteDetails!.rfssIdHex,
                           '${siteDetails!.rfssId}'),
+                      if (scanningService?.downlinkFreq != null)
+                        _buildInfoRow('Downlink', 
+                          '${scanningService!.downlinkFreq!.toStringAsFixed(6)} MHz', ''),
+                      if (scanningService?.uplinkFreq != null)
+                        _buildInfoRow('Uplink', 
+                          '${scanningService!.uplinkFreq!.toStringAsFixed(6)} MHz', ''),
+                      if (scanningService != null && scanningService!.adjacentSites.isNotEmpty)
+                        _buildAdjacentSitesSection(scanningService!.adjacentSites),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -154,10 +165,169 @@ class SiteDetailsScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildAdjacentSitesSection(Map<String, Map<String, dynamic>> sites) {
+    final sortedSites = sites.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Adjacent Sites',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...sortedSites.map((entry) {
+            final siteId = entry.key;
+            final siteData = entry.value;
+            final downlink = siteData['downlink'] as double?;
+            final uplink = siteData['uplink'] as double?;
+            final channel = siteData['channel'] as String?;
+            
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[800],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey[700]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[600],
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'Site ',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'monospace',
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Text(
+                          '',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'monospace',
+                            color: Colors.white,
+                          ),
+                        ),
+                        Text(
+                          siteId,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'monospace',
+                            color: Colors.white,
+                          ),
+                        ),
+                        if (channel != null) ...[
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Ch:',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white70,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '0x$channel',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (downlink != null || uplink != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          if (downlink != null)
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  const Text(
+                                    '↓ ',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${downlink.toStringAsFixed(6)} MHz',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontFamily: 'monospace',
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (uplink != null)
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  const Text(
+                                    '↑ ',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${uplink.toStringAsFixed(6)} MHz',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontFamily: 'monospace',
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLegend() {
     return Card(
       elevation: 1,
-      color: Colors.grey[100],
+      color: Colors.grey[800],
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -168,6 +338,7 @@ class SiteDetailsScreen extends StatelessWidget {
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
+                color: Colors.white,
               ),
             ),
             const SizedBox(height: 12),
@@ -195,6 +366,7 @@ class SiteDetailsScreen extends StatelessWidget {
               style: const TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 13,
+                color: Colors.white,
               ),
             ),
           ),
@@ -203,7 +375,7 @@ class SiteDetailsScreen extends StatelessWidget {
               description,
               style: const TextStyle(
                 fontSize: 13,
-                color: Colors.black87,
+                color: Colors.white70,
               ),
             ),
           ),

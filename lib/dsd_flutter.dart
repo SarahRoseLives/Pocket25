@@ -101,6 +101,18 @@ class DsdFlutter {
     return DsdFlutterPlatform.instance.siteEventStream;
   }
   
+  /// Stream of signal quality metrics from DSD
+  /// 
+  /// Each event is a Map containing:
+  /// - tsbkOk: int (successful TSBK/frame decodes)
+  /// - tsbkErr: int (failed TSBK/frame decodes due to FEC errors)
+  /// - synctype: int (P25 sync type: 0/1 for P25 P1, 35/36 for P25 P2)
+  /// - hasCarrier: bool (carrier detected)
+  /// - hasSync: bool (P25 sync detected)
+  Stream<Map<String, dynamic>> get signalEventStream {
+    return DsdFlutterPlatform.instance.signalEventStream;
+  }
+  
   /// Set the talkgroup filter mode
   /// 
   /// [mode] values:

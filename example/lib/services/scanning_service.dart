@@ -30,12 +30,23 @@ class ScanningService extends ChangeNotifier {
   List<Map<String, dynamic>> _allSystemSites = [];
   Timer? _lockCheckTimer;
   StreamSubscription? _outputSubscription;
+  StreamSubscription? _signalSubscription;
   StreamSubscription<Position>? _positionSubscription;
   
   bool _hasLock = false;
   DateTime? _lastActivityTime;
   bool _gpsHoppingEnabled = false;
   Position? _lastPosition;
+  
+  // Signal quality tracking
+  int _tsbkCount = 0;
+  int _parityMismatches = 0;
+  DateTime? _lastTsbkTime;
+  
+  // Network information
+  Map<String, Map<String, dynamic>> _adjacentSites = {}; // site_id -> {channel, downlink, uplink}
+  double? _downlinkFreq;
+  double? _uplinkFreq;
   
   ScanningState get state => _state;
   int? get currentSiteId => _currentSiteId;
@@ -46,6 +57,12 @@ class ScanningService extends ChangeNotifier {
   bool get hasLock => _hasLock;
   bool get gpsHoppingEnabled => _gpsHoppingEnabled;
   Position? get lastPosition => _lastPosition;
+  int get tsbkCount => _tsbkCount;
+  int get parityMismatches => _parityMismatches;
+  DateTime? get lastTsbkTime => _lastTsbkTime;
+  Map<String, Map<String, dynamic>> get adjacentSites => _adjacentSites;
+  double? get downlinkFreq => _downlinkFreq;
+  double? get uplinkFreq => _uplinkFreq;
 
   ScanningService(
     this._dsdPlugin,
@@ -54,25 +71,145 @@ class ScanningService extends ChangeNotifier {
     this._onStop,
   ) {
     _listenToOutput();
+    _listenToSignal();
   }
 
   void _listenToOutput() {
     _outputSubscription = _dsdPlugin.outputStream.listen((line) {
-      // Check for control channel activity indicators
-      if (line.contains('Sync: +P25') || 
-          line.contains('TSBK') || 
-          line.contains('NET STS') ||
-          line.contains('rfss')) {
+      // Parse Adjacent Site broadcasts
+      // Example: "  LRA [00] RFSS[002] SITE [049] SYSID [348] CHAN-T [17DC] SSC [70]"
+      if (line.contains('Adjacent Status Broadcast') || line.contains('Adjacent')) {
+        if (kDebugMode) {
+          print('DEBUG: Found Adjacent line: $line');
+        }
+        final siteMatch = RegExp(r'SITE\s*\[([0-9A-Fa-f]+)\]', caseSensitive: false).firstMatch(line);
+        final channelMatch = RegExp(r'CHAN-T\s*\[([0-9A-Fa-f]+)\]', caseSensitive: false).firstMatch(line);
+        
+        if (siteMatch != null) {
+          final siteId = siteMatch.group(1);
+          final channelId = channelMatch?.group(1);
+          
+          if (siteId != null) {
+            if (kDebugMode) {
+              print('DEBUG: Extracted adjacent site: $siteId, channel: $channelId');
+            }
+            
+            // Store or update adjacent site info
+            if (!_adjacentSites.containsKey(siteId)) {
+              _adjacentSites[siteId] = {
+                'channel': channelId,
+                'downlink': null,
+                'uplink': null,
+              };
+              notifyListeners();
+            } else if (channelId != null && _adjacentSites[siteId]!['channel'] != channelId) {
+              _adjacentSites[siteId]!['channel'] = channelId;
+              notifyListeners();
+            }
+          }
+        }
+      }
+      
+      // Parse frequency information from P25 FREQ lines
+      // Example: "  P25 FREQ: map ch=0x15BC -> 771.181250 MHz"
+      if (line.contains('P25 FREQ:') && line.contains('MHz')) {
+        if (kDebugMode) {
+          print('DEBUG: Found P25 FREQ line: $line');
+        }
+        final channelMatch = RegExp(r'ch=0x([0-9A-Fa-f]+)', caseSensitive: false).firstMatch(line);
+        final freqMatch = RegExp(r'([0-9.]+)\s*MHz').firstMatch(line);
+        
+        if (freqMatch != null) {
+          final freq = double.tryParse(freqMatch.group(1) ?? '');
+          final channelId = channelMatch?.group(1)?.toUpperCase();
+          
+          if (freq != null) {
+            if (kDebugMode) {
+              print('DEBUG: Parsed frequency: $freq MHz for channel: $channelId');
+            }
+            
+            // Determine if downlink or uplink based on frequency range
+            bool isDownlink = false;
+            bool isUplink = false;
+            
+            if (freq >= 851 && freq <= 870) {
+              // 800 MHz band downlink
+              isDownlink = true;
+              _downlinkFreq = freq;
+              if (kDebugMode) print('DEBUG: Set as 800 MHz downlink');
+            } else if (freq >= 806 && freq <= 825) {
+              // 800 MHz band uplink
+              isUplink = true;
+              _uplinkFreq = freq;
+              if (kDebugMode) print('DEBUG: Set as 800 MHz uplink');
+            } else if (freq >= 762 && freq <= 776) {
+              // 700 MHz band downlink
+              isDownlink = true;
+              _downlinkFreq = freq;
+              if (kDebugMode) print('DEBUG: Set as 700 MHz downlink');
+            } else if (freq >= 792 && freq <= 806) {
+              // 700 MHz band uplink
+              isUplink = true;
+              _uplinkFreq = freq;
+              if (kDebugMode) print('DEBUG: Set as 700 MHz uplink');
+            } else {
+              if (kDebugMode) print('DEBUG: Frequency $freq MHz not in known band ranges');
+            }
+            
+            // Check if this frequency matches any adjacent site's channel
+            if (channelId != null) {
+              for (var entry in _adjacentSites.entries) {
+                final siteChannel = entry.value['channel'] as String?;
+                if (siteChannel?.toUpperCase() == channelId) {
+                  if (isDownlink) {
+                    entry.value['downlink'] = freq;
+                    if (kDebugMode) print('DEBUG: Set downlink $freq MHz for adjacent site ${entry.key}');
+                  } else if (isUplink) {
+                    entry.value['uplink'] = freq;
+                    if (kDebugMode) print('DEBUG: Set uplink $freq MHz for adjacent site ${entry.key}');
+                  }
+                }
+              }
+            }
+            
+            notifyListeners();
+          }
+        }
+      }
+      
+      // Note: Control channel lock detection now handled by _listenToSignal()
+      // which uses DSD state fields instead of parsing logs
+    });
+  }
+  
+  void _listenToSignal() {
+    _signalSubscription = _dsdPlugin.signalEventStream.listen((event) {
+      // Update TSBK counts from DSD state (more reliable than parsing)
+      final tsbkOk = event['tsbkOk'] as int;
+      final tsbkErr = event['tsbkErr'] as int;
+      final hasSync = event['hasSync'] as bool;
+      
+      // Update counters
+      if (tsbkOk > _tsbkCount) {
+        _tsbkCount = tsbkOk;
+        _lastTsbkTime = DateTime.now();
+      }
+      _parityMismatches = tsbkErr;
+      
+      // Update lock status based on sync
+      if (hasSync) {
         _hasLock = true;
         _lastActivityTime = DateTime.now();
         
         if (_state == ScanningState.searching) {
           _setState(ScanningState.locked);
           if (kDebugMode) {
-            print('Control channel LOCKED at ${_currentFrequency} MHz');
+            print('Control channel LOCKED at $_currentFrequency MHz');
           }
         }
       }
+      
+      notifyListeners();
     });
   }
 
@@ -87,6 +224,16 @@ class ScanningService extends ChangeNotifier {
       _currentChannelIndex = 0;
       _hasLock = false;
       _lastActivityTime = null;
+      
+      // Reset signal quality tracking
+      _tsbkCount = 0;
+      _parityMismatches = 0;
+      _lastTsbkTime = null;
+      
+      // Reset network information
+      _adjacentSites.clear();
+      _downlinkFreq = null;
+      _uplinkFreq = null;
       
       // Get system ID if not provided
       if (systemId != null) {
@@ -434,6 +581,7 @@ class ScanningService extends ChangeNotifier {
   void dispose() {
     _lockCheckTimer?.cancel();
     _outputSubscription?.cancel();
+    _signalSubscription?.cancel();
     _positionSubscription?.cancel();
     super.dispose();
   }

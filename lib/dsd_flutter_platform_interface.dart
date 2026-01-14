@@ -91,6 +91,11 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('siteEventStream has not been implemented.');
   }
   
+  /// Stream of signal quality metrics from DSD
+  Stream<Map<String, dynamic>> get signalEventStream {
+    throw UnimplementedError('signalEventStream has not been implemented.');
+  }
+  
   /// Set the talkgroup filter mode
   /// mode: 0=disabled, 1=whitelist (only hear listed TGs), 2=blacklist (mute listed TGs)
   Future<void> setFilterMode(int mode) {
