@@ -41,6 +41,7 @@ static jmethodID g_send_output_method = nullptr;
 static jmethodID g_send_call_event_method = nullptr;
 static jmethodID g_send_site_event_method = nullptr;
 static jmethodID g_send_signal_event_method = nullptr;
+static jmethodID g_send_network_event_method = nullptr;
 
 // Last known call state for change detection
 static int g_last_tg = 0;
@@ -51,6 +52,9 @@ static unsigned int g_last_tsbk_ok = 0;
 static unsigned int g_last_tsbk_err = 0;
 static int g_last_synctype = -1;
 static int g_last_carrier = 0;
+
+// Last known network state for change detection
+static int g_last_nb_count = 0;
 
 // ============================================================================
 // Talkgroup Filtering (Whitelist/Blacklist)
@@ -283,6 +287,54 @@ static void send_signal_event_to_flutter(
     }
 }
 
+// Send network topology updates to Flutter (neighbor sites, patches, etc.)
+static void send_network_event_to_flutter(
+    int neighborCount,
+    const long int* neighborFreqs,
+    int patchCount
+) {
+    if (!g_jvm || !g_plugin_class || !g_send_network_event_method) return;
+    
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    
+    int status = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if (g_jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+            attached = true;
+        } else {
+            return;
+        }
+    } else if (status != JNI_OK) {
+        return;
+    }
+    
+    // Convert neighbor frequencies to Java long array
+    jlongArray jNeighborFreqs = env->NewLongArray(neighborCount);
+    if (jNeighborFreqs && neighborCount > 0) {
+        jlong* freqs = new jlong[neighborCount];
+        for (int i = 0; i < neighborCount; i++) {
+            freqs[i] = (jlong)neighborFreqs[i];
+        }
+        env->SetLongArrayRegion(jNeighborFreqs, 0, neighborCount, freqs);
+        delete[] freqs;
+    }
+    
+    env->CallStaticVoidMethod(g_plugin_class, g_send_network_event_method,
+        (jint)neighborCount,
+        jNeighborFreqs,
+        (jint)patchCount
+    );
+    
+    if (jNeighborFreqs) {
+        env->DeleteLocalRef(jNeighborFreqs);
+    }
+    
+    if (attached) {
+        g_jvm->DetachCurrentThread();
+    }
+}
+
 // Poll thread - checks state for call and site changes
 static void* poll_thread_func(void* arg) {
     LOGI("Poll thread started");
@@ -422,6 +474,20 @@ static void* poll_thread_func(void* arg) {
             g_last_carrier = carrier;
         }
         
+        // Check for network topology changes (neighbor sites, patches)
+        int nb_count = g_state->p25_nb_count;
+        int patch_count = g_state->p25_patch_count;
+        
+        if (nb_count != g_last_nb_count || nb_count > 0) {
+            send_network_event_to_flutter(
+                nb_count,
+                g_state->p25_nb_freq,
+                patch_count
+            );
+            
+            g_last_nb_count = nb_count;
+        }
+        
         // Poll every 100ms
         usleep(100000);
     }
@@ -497,6 +563,8 @@ JNI_OnLoad(JavaVM* vm, void* reserved) {
                 "(JJJJI)V");
             g_send_signal_event_method = env->GetStaticMethodID(g_plugin_class, "sendSignalEvent",
                 "(IIIZZ)V");
+            g_send_network_event_method = env->GetStaticMethodID(g_plugin_class, "sendNetworkEvent",
+                "(I[JI)V");
             env->DeleteLocalRef(localClass);
             LOGI("Flutter callbacks initialized");
         } else {

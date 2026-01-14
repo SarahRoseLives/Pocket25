@@ -73,8 +73,8 @@ class SiteDetailsScreen extends StatelessWidget {
                       if (scanningService?.uplinkFreq != null)
                         _buildInfoRow('Uplink', 
                           '${scanningService!.uplinkFreq!.toStringAsFixed(6)} MHz', ''),
-                      if (scanningService != null && scanningService!.adjacentSites.isNotEmpty)
-                        _buildAdjacentSitesSection(scanningService!.adjacentSites),
+                      if (scanningService != null && scanningService!.neighborFreqs.isNotEmpty)
+                        _buildNeighborSitesSection(scanningService!.neighborFreqs),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -165,29 +165,24 @@ class SiteDetailsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildAdjacentSitesSection(Map<String, Map<String, dynamic>> sites) {
-    final sortedSites = sites.entries.toList()
-      ..sort((a, b) => a.key.compareTo(b.key));
-    
+  Widget _buildNeighborSitesSection(List<int> neighborFreqs) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Adjacent Sites',
-            style: TextStyle(
+          Text(
+            'Neighbor Sites (${neighborFreqs.length})',
+            style: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w500,
             ),
           ),
           const SizedBox(height: 8),
-          ...sortedSites.map((entry) {
-            final siteId = entry.key;
-            final siteData = entry.value;
-            final downlink = siteData['downlink'] as double?;
-            final uplink = siteData['uplink'] as double?;
-            final channel = siteData['channel'] as String?;
+          ...neighborFreqs.asMap().entries.map((entry) {
+            final index = entry.key;
+            final freqHz = entry.value;
+            final freqMhz = freqHz / 1000000.0;
             
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -198,122 +193,35 @@ class SiteDetailsScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.grey[700]!),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[600],
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text(
-                            'Site ',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                              fontFamily: 'monospace',
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        const Text(
-                          '',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            fontFamily: 'monospace',
-                            color: Colors.white,
-                          ),
-                        ),
-                        Text(
-                          siteId,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            fontFamily: 'monospace',
-                            color: Colors.white,
-                          ),
-                        ),
-                        if (channel != null) ...[
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Ch:',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.white70,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '0x$channel',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    if (downlink != null || uplink != null) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          if (downlink != null)
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  const Text(
-                                    '↓ ',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                  Text(
-                                    '${downlink.toStringAsFixed(6)} MHz',
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontFamily: 'monospace',
-                                      color: Colors.white70,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          if (uplink != null)
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  const Text(
-                                    '↑ ',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                  Text(
-                                    '${uplink.toStringAsFixed(6)} MHz',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontFamily: 'monospace',
-                                      color: Colors.white70,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[600],
+                        borderRadius: BorderRadius.circular(4),
                       ),
-                    ],
+                      child: Text(
+                        'Site ${index + 1}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Icon(Icons.cell_tower, color: Colors.white70, size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${freqMhz.toStringAsFixed(6)} MHz',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontFamily: 'monospace',
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ],
                 ),
               ),

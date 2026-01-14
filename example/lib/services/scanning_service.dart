@@ -31,6 +31,7 @@ class ScanningService extends ChangeNotifier {
   Timer? _lockCheckTimer;
   StreamSubscription? _outputSubscription;
   StreamSubscription? _signalSubscription;
+  StreamSubscription? _networkSubscription;
   StreamSubscription<Position>? _positionSubscription;
   
   bool _hasLock = false;
@@ -44,7 +45,8 @@ class ScanningService extends ChangeNotifier {
   DateTime? _lastTsbkTime;
   
   // Network information
-  Map<String, Map<String, dynamic>> _adjacentSites = {}; // site_id -> {channel, downlink, uplink}
+  List<int> _neighborFreqs = []; // Neighbor site frequencies in Hz
+  int _patchCount = 0;
   double? _downlinkFreq;
   double? _uplinkFreq;
   
@@ -60,7 +62,8 @@ class ScanningService extends ChangeNotifier {
   int get tsbkCount => _tsbkCount;
   int get parityMismatches => _parityMismatches;
   DateTime? get lastTsbkTime => _lastTsbkTime;
-  Map<String, Map<String, dynamic>> get adjacentSites => _adjacentSites;
+  List<int> get neighborFreqs => _neighborFreqs;
+  int get patchCount => _patchCount;
   double? get downlinkFreq => _downlinkFreq;
   double? get uplinkFreq => _uplinkFreq;
 
@@ -72,104 +75,46 @@ class ScanningService extends ChangeNotifier {
   ) {
     _listenToOutput();
     _listenToSignal();
+    _listenToNetwork();
   }
 
   void _listenToOutput() {
     _outputSubscription = _dsdPlugin.outputStream.listen((line) {
-      // Parse Adjacent Site broadcasts
-      // Example: "  LRA [00] RFSS[002] SITE [049] SYSID [348] CHAN-T [17DC] SSC [70]"
-      if (line.contains('Adjacent Status Broadcast') || line.contains('Adjacent')) {
-        if (kDebugMode) {
-          print('DEBUG: Found Adjacent line: $line');
-        }
-        final siteMatch = RegExp(r'SITE\s*\[([0-9A-Fa-f]+)\]', caseSensitive: false).firstMatch(line);
-        final channelMatch = RegExp(r'CHAN-T\s*\[([0-9A-Fa-f]+)\]', caseSensitive: false).firstMatch(line);
-        
-        if (siteMatch != null) {
-          final siteId = siteMatch.group(1);
-          final channelId = channelMatch?.group(1);
-          
-          if (siteId != null) {
-            if (kDebugMode) {
-              print('DEBUG: Extracted adjacent site: $siteId, channel: $channelId');
-            }
-            
-            // Store or update adjacent site info
-            if (!_adjacentSites.containsKey(siteId)) {
-              _adjacentSites[siteId] = {
-                'channel': channelId,
-                'downlink': null,
-                'uplink': null,
-              };
-              notifyListeners();
-            } else if (channelId != null && _adjacentSites[siteId]!['channel'] != channelId) {
-              _adjacentSites[siteId]!['channel'] = channelId;
-              notifyListeners();
-            }
-          }
-        }
-      }
-      
       // Parse frequency information from P25 FREQ lines
       // Example: "  P25 FREQ: map ch=0x15BC -> 771.181250 MHz"
       if (line.contains('P25 FREQ:') && line.contains('MHz')) {
         if (kDebugMode) {
           print('DEBUG: Found P25 FREQ line: $line');
         }
-        final channelMatch = RegExp(r'ch=0x([0-9A-Fa-f]+)', caseSensitive: false).firstMatch(line);
         final freqMatch = RegExp(r'([0-9.]+)\s*MHz').firstMatch(line);
         
         if (freqMatch != null) {
           final freq = double.tryParse(freqMatch.group(1) ?? '');
-          final channelId = channelMatch?.group(1)?.toUpperCase();
           
           if (freq != null) {
             if (kDebugMode) {
-              print('DEBUG: Parsed frequency: $freq MHz for channel: $channelId');
+              print('DEBUG: Parsed frequency: $freq MHz');
             }
             
             // Determine if downlink or uplink based on frequency range
-            bool isDownlink = false;
-            bool isUplink = false;
-            
             if (freq >= 851 && freq <= 870) {
               // 800 MHz band downlink
-              isDownlink = true;
               _downlinkFreq = freq;
               if (kDebugMode) print('DEBUG: Set as 800 MHz downlink');
             } else if (freq >= 806 && freq <= 825) {
               // 800 MHz band uplink
-              isUplink = true;
               _uplinkFreq = freq;
               if (kDebugMode) print('DEBUG: Set as 800 MHz uplink');
             } else if (freq >= 762 && freq <= 776) {
               // 700 MHz band downlink
-              isDownlink = true;
               _downlinkFreq = freq;
               if (kDebugMode) print('DEBUG: Set as 700 MHz downlink');
             } else if (freq >= 792 && freq <= 806) {
               // 700 MHz band uplink
-              isUplink = true;
               _uplinkFreq = freq;
               if (kDebugMode) print('DEBUG: Set as 700 MHz uplink');
             } else {
               if (kDebugMode) print('DEBUG: Frequency $freq MHz not in known band ranges');
-            }
-            
-            // Check if this frequency matches any adjacent site's channel
-            if (channelId != null) {
-              for (var entry in _adjacentSites.entries) {
-                final siteChannel = entry.value['channel'] as String?;
-                if (siteChannel?.toUpperCase() == channelId) {
-                  if (isDownlink) {
-                    entry.value['downlink'] = freq;
-                    if (kDebugMode) print('DEBUG: Set downlink $freq MHz for adjacent site ${entry.key}');
-                  } else if (isUplink) {
-                    entry.value['uplink'] = freq;
-                    if (kDebugMode) print('DEBUG: Set uplink $freq MHz for adjacent site ${entry.key}');
-                  }
-                }
-              }
             }
             
             notifyListeners();
@@ -212,6 +157,28 @@ class ScanningService extends ChangeNotifier {
       notifyListeners();
     });
   }
+  
+  void _listenToNetwork() {
+    _networkSubscription = _dsdPlugin.networkEventStream.listen((event) {
+      // Update neighbor sites from DSD state
+      final neighborCount = event['neighborCount'] as int;
+      final neighborFreqList = event['neighborFreqs'] as List<dynamic>;
+      final patchCount = event['patchCount'] as int;
+      
+      // Convert to List<int>
+      _neighborFreqs = neighborFreqList.map((freq) => freq as int).toList();
+      _patchCount = patchCount;
+      
+      if (kDebugMode) {
+        print('Network update: $neighborCount neighbors, $patchCount patches');
+        for (int i = 0; i < _neighborFreqs.length && i < 5; i++) {
+          print('  Neighbor ${i+1}: ${(_neighborFreqs[i] / 1000000).toStringAsFixed(6)} MHz');
+        }
+      }
+      
+      notifyListeners();
+    });
+  }
 
   Future<void> startScanning(int siteId, String siteName, {int? systemId}) async {
     if (_state != ScanningState.idle) {
@@ -231,7 +198,8 @@ class ScanningService extends ChangeNotifier {
       _lastTsbkTime = null;
       
       // Reset network information
-      _adjacentSites.clear();
+      _neighborFreqs.clear();
+      _patchCount = 0;
       _downlinkFreq = null;
       _uplinkFreq = null;
       
@@ -582,6 +550,7 @@ class ScanningService extends ChangeNotifier {
     _lockCheckTimer?.cancel();
     _outputSubscription?.cancel();
     _signalSubscription?.cancel();
+    _networkSubscription?.cancel();
     _positionSubscription?.cancel();
     super.dispose();
   }

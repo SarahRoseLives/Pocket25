@@ -96,6 +96,11 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('signalEventStream has not been implemented.');
   }
   
+  /// Stream of network topology updates from DSD
+  Stream<Map<String, dynamic>> get networkEventStream {
+    throw UnimplementedError('networkEventStream has not been implemented.');
+  }
+  
   /// Set the talkgroup filter mode
   /// mode: 0=disabled, 1=whitelist (only hear listed TGs), 2=blacklist (mute listed TGs)
   Future<void> setFilterMode(int mode) {

@@ -113,6 +113,16 @@ class DsdFlutter {
     return DsdFlutterPlatform.instance.signalEventStream;
   }
   
+  /// Stream of network topology updates from DSD
+  /// 
+  /// Each event is a Map containing:
+  /// - neighborCount: int (number of neighbor sites)
+  /// - neighborFreqs: List<int> (neighbor site frequencies in Hz)
+  /// - patchCount: int (number of active patches)
+  Stream<Map<String, dynamic>> get networkEventStream {
+    return DsdFlutterPlatform.instance.networkEventStream;
+  }
+  
   /// Set the talkgroup filter mode
   /// 
   /// [mode] values:

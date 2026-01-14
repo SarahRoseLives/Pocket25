@@ -21,10 +21,14 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
   /// The event channel for receiving signal quality metrics.
   final _signalEventChannel = const EventChannel('dsd_flutter/signal_events');
   
+  /// The event channel for receiving network topology updates.
+  final _networkEventChannel = const EventChannel('dsd_flutter/network_events');
+  
   Stream<String>? _outputStream;
   Stream<Map<String, dynamic>>? _callEventStream;
   Stream<Map<String, dynamic>>? _siteEventStream;
   Stream<Map<String, dynamic>>? _signalEventStream;
+  Stream<Map<String, dynamic>>? _networkEventStream;
 
   @override
   Future<String?> getPlatformVersion() async {
@@ -135,6 +139,14 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
         .receiveBroadcastStream()
         .map((event) => Map<String, dynamic>.from(event as Map));
     return _signalEventStream!;
+  }
+  
+  @override
+  Stream<Map<String, dynamic>> get networkEventStream {
+    _networkEventStream ??= _networkEventChannel
+        .receiveBroadcastStream()
+        .map((event) => Map<String, dynamic>.from(event as Map));
+    return _networkEventStream!;
   }
   
   @override

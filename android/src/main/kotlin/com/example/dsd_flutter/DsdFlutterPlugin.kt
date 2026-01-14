@@ -20,10 +20,12 @@ class DsdFlutterPlugin :
     private lateinit var callEventChannel: EventChannel
     private lateinit var siteEventChannel: EventChannel
     private lateinit var signalEventChannel: EventChannel
+    private lateinit var networkEventChannel: EventChannel
     private var eventSink: EventChannel.EventSink? = null
     private var callEventSink: EventChannel.EventSink? = null
     private var siteEventSink: EventChannel.EventSink? = null
     private var signalEventSink: EventChannel.EventSink? = null
+    private var networkEventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     companion object {
@@ -127,6 +129,26 @@ class DsdFlutterPlugin :
                 }
             }
         }
+        
+        // Called from JNI to send network topology updates to Flutter
+        @JvmStatic
+        fun sendNetworkEvent(
+            neighborCount: Int,
+            neighborFreqs: LongArray?,
+            patchCount: Int
+        ) {
+            instance?.let { plugin ->
+                plugin.mainHandler.post {
+                    val freqList = neighborFreqs?.toList() ?: emptyList()
+                    val eventMap = mapOf(
+                        "neighborCount" to neighborCount,
+                        "neighborFreqs" to freqList,
+                        "patchCount" to patchCount
+                    )
+                    plugin.networkEventSink?.success(eventMap)
+                }
+            }
+        }
     }
 
     // Native method declarations
@@ -166,6 +188,9 @@ class DsdFlutterPlugin :
         
         signalEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "dsd_flutter/signal_events")
         signalEventChannel.setStreamHandler(SignalEventStreamHandler())
+        
+        networkEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "dsd_flutter/network_events")
+        networkEventChannel.setStreamHandler(NetworkEventStreamHandler())
         
         nativeInit()
     }
@@ -263,6 +288,7 @@ class DsdFlutterPlugin :
         callEventChannel.setStreamHandler(null)
         siteEventChannel.setStreamHandler(null)
         signalEventChannel.setStreamHandler(null)
+        networkEventChannel.setStreamHandler(null)
         instance = null
     }
     
@@ -305,6 +331,17 @@ class DsdFlutterPlugin :
         
         override fun onCancel(arguments: Any?) {
             signalEventSink = null
+        }
+    }
+    
+    // Inner class for network events stream
+    inner class NetworkEventStreamHandler : EventChannel.StreamHandler {
+        override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+            networkEventSink = events
+        }
+        
+        override fun onCancel(arguments: Any?) {
+            networkEventSink = null
         }
     }
 }
