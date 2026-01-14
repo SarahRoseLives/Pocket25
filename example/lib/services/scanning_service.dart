@@ -59,6 +59,7 @@ class ScanningService extends ChangeNotifier {
   ScanningState get state => _state;
   int? get currentSiteId => _currentSiteId;
   String? get currentSiteName => _currentSiteName;
+  int? get currentSystemId => _currentSystemId;
   double? get currentFrequency => _currentFrequency;
   int get currentChannelIndex => _currentChannelIndex;
   int get totalChannels => _controlChannels.length;
@@ -204,6 +205,13 @@ class ScanningService extends ChangeNotifier {
         for (var patch in _patches) {
           print('  Patch SGID ${patch['sgid']}: ${patch['wgidCount']} WGIDs, '
                 '${patch['wuidCount']} WUIDs, active=${patch['active']}');
+          // Print actual WGID values
+          final wgids = patch['wgids'] as List<dynamic>;
+          final wgidCount = patch['wgidCount'] as int;
+          print('    WGIDs: ${wgids.take(wgidCount).join(", ")}');
+          if (wgids.length > wgidCount) {
+            print('    (Full array has ${wgids.length} slots, only $wgidCount are valid)');
+          }
         }
       }
       

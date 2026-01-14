@@ -737,10 +737,10 @@ static void* poll_thread_func(void* arg) {
             g_last_carrier = carrier;
         }
         
-        // Check for network topology changes (neighbor sites)
+        // Check for neighbor site changes
         int nb_count = g_state->p25_nb_count;
         
-        if (nb_count != g_last_nb_count || nb_count > 0) {
+        if (nb_count != g_last_nb_count) {
             send_neighbor_event_to_flutter(
                 nb_count,
                 g_state->p25_nb_freq,
@@ -753,7 +753,7 @@ static void* poll_thread_func(void* arg) {
         // Check for patch changes
         int patch_count = g_state->p25_patch_count;
         
-        if (patch_count != g_last_patch_count || patch_count > 0) {
+        if (patch_count != g_last_patch_count) {
             send_patch_event_to_flutter(
                 patch_count,
                 g_state->p25_patch_sgid,
@@ -775,7 +775,7 @@ static void* poll_thread_func(void* arg) {
         // Check for group attachment changes
         int ga_count = g_state->p25_ga_count;
         
-        if (ga_count != g_last_ga_count || ga_count > 0) {
+        if (ga_count != g_last_ga_count) {
             send_ga_event_to_flutter(
                 ga_count,
                 g_state->p25_ga_rid,
@@ -789,7 +789,7 @@ static void* poll_thread_func(void* arg) {
         // Check for affiliation changes
         int aff_count = g_state->p25_aff_count;
         
-        if (aff_count != g_last_aff_count || aff_count > 0) {
+        if (aff_count != g_last_aff_count) {
             send_aff_event_to_flutter(
                 aff_count,
                 g_state->p25_aff_rid,

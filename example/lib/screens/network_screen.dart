@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/scanning_service.dart';
+import '../services/database_service.dart';
 
 class NetworkScreen extends StatefulWidget {
   final ScanningService? scanningService;
@@ -152,21 +153,61 @@ class _NeighborSitesTab extends StatelessWidget {
 // Patches Tab
 // ============================================================================
 
-class _PatchesTab extends StatelessWidget {
+class _PatchesTab extends StatefulWidget {
   final ScanningService? scanningService;
   
   const _PatchesTab({this.scanningService});
 
   @override
+  State<_PatchesTab> createState() => _PatchesTabState();
+}
+
+class _PatchesTabState extends State<_PatchesTab> {
+  final DatabaseService _db = DatabaseService();
+  final Map<int, String> _talkgroupNames = {};
+  bool _isLoadingNames = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAllTalkgroupNames();
+  }
+
+  Future<void> _loadAllTalkgroupNames() async {
+    if (_isLoadingNames) return;
+    _isLoadingNames = true;
+    
+    try {
+      final systemId = widget.scanningService?.currentSystemId;
+      if (systemId == null) return;
+      
+      final talkgroups = await _db.getTalkgroups(systemId);
+      if (mounted) {
+        setState(() {
+          for (var tg in talkgroups) {
+            if (tg['alpha_tag'] != null) {
+              _talkgroupNames[tg['dec'] as int] = tg['alpha_tag'] as String;
+            }
+          }
+        });
+      }
+    } catch (e) {
+      // Ignore errors
+    } finally {
+      _isLoadingNames = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (scanningService == null) {
+    if (widget.scanningService == null) {
       return const Center(child: CircularProgressIndicator());
     }
     
     return AnimatedBuilder(
-      animation: scanningService!,
+      animation: widget.scanningService!,
       builder: (context, _) {
-        final patches = scanningService!.patches;
+        final patches = widget.scanningService!.patches;
         
         if (patches.isEmpty) {
           return const Center(
@@ -253,7 +294,7 @@ class _PatchesTab extends StatelessWidget {
             if (wgidCount > 0) ...[
               const SizedBox(height: 8),
               Text(
-                'Talkgroups (WGIDs):',
+                'Talkgroups ($wgidCount):',
                 style: TextStyle(color: Colors.grey[400], fontSize: 13),
               ),
               const SizedBox(height: 4),
@@ -261,8 +302,18 @@ class _PatchesTab extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: wgids.take(wgidCount).map((wgid) {
+                  final name = _talkgroupNames[wgid];
+                  
                   return Chip(
-                    label: Text('$wgid', style: const TextStyle(color: Colors.white)),
+                    label: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('$wgid', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        if (name != null)
+                          Text(name, style: TextStyle(color: Colors.white70, fontSize: 10)),
+                      ],
+                    ),
                     backgroundColor: Colors.blue[700],
                   );
                 }).toList(),
