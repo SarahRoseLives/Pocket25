@@ -24,11 +24,23 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
   /// The event channel for receiving network topology updates.
   final _networkEventChannel = const EventChannel('dsd_flutter/network_events');
   
+  /// The event channel for receiving patch updates.
+  final _patchEventChannel = const EventChannel('dsd_flutter/patch_events');
+  
+  /// The event channel for receiving group attachment updates.
+  final _groupAttachmentEventChannel = const EventChannel('dsd_flutter/group_attachment_events');
+  
+  /// The event channel for receiving affiliation updates.
+  final _affiliationEventChannel = const EventChannel('dsd_flutter/affiliation_events');
+  
   Stream<String>? _outputStream;
   Stream<Map<String, dynamic>>? _callEventStream;
   Stream<Map<String, dynamic>>? _siteEventStream;
   Stream<Map<String, dynamic>>? _signalEventStream;
   Stream<Map<String, dynamic>>? _networkEventStream;
+  Stream<Map<String, dynamic>>? _patchEventStream;
+  Stream<Map<String, dynamic>>? _groupAttachmentEventStream;
+  Stream<Map<String, dynamic>>? _affiliationEventStream;
 
   @override
   Future<String?> getPlatformVersion() async {
@@ -147,6 +159,30 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
         .receiveBroadcastStream()
         .map((event) => Map<String, dynamic>.from(event as Map));
     return _networkEventStream!;
+  }
+  
+  @override
+  Stream<Map<String, dynamic>> get patchEventStream {
+    _patchEventStream ??= _patchEventChannel
+        .receiveBroadcastStream()
+        .map((event) => Map<String, dynamic>.from(event as Map));
+    return _patchEventStream!;
+  }
+  
+  @override
+  Stream<Map<String, dynamic>> get groupAttachmentEventStream {
+    _groupAttachmentEventStream ??= _groupAttachmentEventChannel
+        .receiveBroadcastStream()
+        .map((event) => Map<String, dynamic>.from(event as Map));
+    return _groupAttachmentEventStream!;
+  }
+  
+  @override
+  Stream<Map<String, dynamic>> get affiliationEventStream {
+    _affiliationEventStream ??= _affiliationEventChannel
+        .receiveBroadcastStream()
+        .map((event) => Map<String, dynamic>.from(event as Map));
+    return _affiliationEventStream!;
   }
   
   @override

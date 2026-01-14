@@ -39,6 +39,15 @@ class MockDsdFlutterPlatform
   Stream<Map<String, dynamic>> get networkEventStream => const Stream.empty();
   
   @override
+  Stream<Map<String, dynamic>> get patchEventStream => const Stream.empty();
+  
+  @override
+  Stream<Map<String, dynamic>> get groupAttachmentEventStream => const Stream.empty();
+  
+  @override
+  Stream<Map<String, dynamic>> get affiliationEventStream => const Stream.empty();
+  
+  @override
   Future<bool> isNativeRtlSdrSupported() async => false;
   
   @override

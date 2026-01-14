@@ -101,6 +101,21 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('networkEventStream has not been implemented.');
   }
   
+  /// Stream of patch updates from DSD
+  Stream<Map<String, dynamic>> get patchEventStream {
+    throw UnimplementedError('patchEventStream has not been implemented.');
+  }
+  
+  /// Stream of group attachment updates from DSD
+  Stream<Map<String, dynamic>> get groupAttachmentEventStream {
+    throw UnimplementedError('groupAttachmentEventStream has not been implemented.');
+  }
+  
+  /// Stream of affiliation updates from DSD
+  Stream<Map<String, dynamic>> get affiliationEventStream {
+    throw UnimplementedError('affiliationEventStream has not been implemented.');
+  }
+  
   /// Set the talkgroup filter mode
   /// mode: 0=disabled, 1=whitelist (only hear listed TGs), 2=blacklist (mute listed TGs)
   Future<void> setFilterMode(int mode) {

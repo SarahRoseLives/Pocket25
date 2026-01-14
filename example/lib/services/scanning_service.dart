@@ -32,6 +32,9 @@ class ScanningService extends ChangeNotifier {
   StreamSubscription? _outputSubscription;
   StreamSubscription? _signalSubscription;
   StreamSubscription? _networkSubscription;
+  StreamSubscription? _patchSubscription;
+  StreamSubscription? _gaSubscription;
+  StreamSubscription? _affSubscription;
   StreamSubscription<Position>? _positionSubscription;
   
   bool _hasLock = false;
@@ -46,7 +49,10 @@ class ScanningService extends ChangeNotifier {
   
   // Network information
   List<int> _neighborFreqs = []; // Neighbor site frequencies in Hz
-  int _patchCount = 0;
+  List<int> _neighborLastSeen = []; // Last seen timestamps for neighbors
+  List<Map<String, dynamic>> _patches = []; // Active patches
+  List<Map<String, dynamic>> _groupAttachments = []; // Group attachments
+  List<Map<String, dynamic>> _affiliations = []; // Affiliated radios
   double? _downlinkFreq;
   double? _uplinkFreq;
   
@@ -63,7 +69,10 @@ class ScanningService extends ChangeNotifier {
   int get parityMismatches => _parityMismatches;
   DateTime? get lastTsbkTime => _lastTsbkTime;
   List<int> get neighborFreqs => _neighborFreqs;
-  int get patchCount => _patchCount;
+  List<int> get neighborLastSeen => _neighborLastSeen;
+  List<Map<String, dynamic>> get patches => _patches;
+  List<Map<String, dynamic>> get groupAttachments => _groupAttachments;
+  List<Map<String, dynamic>> get affiliations => _affiliations;
   double? get downlinkFreq => _downlinkFreq;
   double? get uplinkFreq => _uplinkFreq;
 
@@ -76,6 +85,9 @@ class ScanningService extends ChangeNotifier {
     _listenToOutput();
     _listenToSignal();
     _listenToNetwork();
+    _listenToPatches();
+    _listenToGroupAttachments();
+    _listenToAffiliations();
   }
 
   void _listenToOutput() {
@@ -163,17 +175,71 @@ class ScanningService extends ChangeNotifier {
       // Update neighbor sites from DSD state
       final neighborCount = event['neighborCount'] as int;
       final neighborFreqList = event['neighborFreqs'] as List<dynamic>;
-      final patchCount = event['patchCount'] as int;
+      final neighborLastSeenList = event['neighborLastSeen'] as List<dynamic>;
       
       // Convert to List<int>
       _neighborFreqs = neighborFreqList.map((freq) => freq as int).toList();
-      _patchCount = patchCount;
+      _neighborLastSeen = neighborLastSeenList.map((ts) => ts as int).toList();
       
       if (kDebugMode) {
-        print('Network update: $neighborCount neighbors, $patchCount patches');
+        print('Network update: $neighborCount neighbors');
         for (int i = 0; i < _neighborFreqs.length && i < 5; i++) {
           print('  Neighbor ${i+1}: ${(_neighborFreqs[i] / 1000000).toStringAsFixed(6)} MHz');
         }
+      }
+      
+      notifyListeners();
+    });
+  }
+  
+  void _listenToPatches() {
+    _patchSubscription = _dsdPlugin.patchEventStream.listen((event) {
+      final patchCount = event['patchCount'] as int;
+      final patchList = event['patches'] as List<dynamic>;
+      
+      _patches = patchList.map((p) => Map<String, dynamic>.from(p as Map)).toList();
+      
+      if (kDebugMode) {
+        print('Patch update: $patchCount patches');
+        for (var patch in _patches) {
+          print('  Patch SGID ${patch['sgid']}: ${patch['wgidCount']} WGIDs, '
+                '${patch['wuidCount']} WUIDs, active=${patch['active']}');
+        }
+      }
+      
+      notifyListeners();
+    });
+  }
+  
+  void _listenToGroupAttachments() {
+    _gaSubscription = _dsdPlugin.groupAttachmentEventStream.listen((event) {
+      final gaCount = event['gaCount'] as int;
+      final attachmentList = event['attachments'] as List<dynamic>;
+      
+      _groupAttachments = attachmentList.map((a) => Map<String, dynamic>.from(a as Map)).toList();
+      
+      if (kDebugMode) {
+        print('Group attachment update: $gaCount attachments');
+        // Only log first few to avoid spam
+        for (int i = 0; i < _groupAttachments.length && i < 5; i++) {
+          final ga = _groupAttachments[i];
+          print('  RID ${ga['rid']} on TG ${ga['tg']}');
+        }
+      }
+      
+      notifyListeners();
+    });
+  }
+  
+  void _listenToAffiliations() {
+    _affSubscription = _dsdPlugin.affiliationEventStream.listen((event) {
+      final affCount = event['affCount'] as int;
+      final affList = event['affiliations'] as List<dynamic>;
+      
+      _affiliations = affList.map((a) => Map<String, dynamic>.from(a as Map)).toList();
+      
+      if (kDebugMode) {
+        print('Affiliation update: $affCount affiliated radios');
       }
       
       notifyListeners();
@@ -199,7 +265,10 @@ class ScanningService extends ChangeNotifier {
       
       // Reset network information
       _neighborFreqs.clear();
-      _patchCount = 0;
+      _neighborLastSeen.clear();
+      _patches.clear();
+      _groupAttachments.clear();
+      _affiliations.clear();
       _downlinkFreq = null;
       _uplinkFreq = null;
       
@@ -551,6 +620,9 @@ class ScanningService extends ChangeNotifier {
     _outputSubscription?.cancel();
     _signalSubscription?.cancel();
     _networkSubscription?.cancel();
+    _patchSubscription?.cancel();
+    _gaSubscription?.cancel();
+    _affSubscription?.cancel();
     _positionSubscription?.cancel();
     super.dispose();
   }

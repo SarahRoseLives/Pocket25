@@ -113,14 +113,41 @@ class DsdFlutter {
     return DsdFlutterPlatform.instance.signalEventStream;
   }
   
-  /// Stream of network topology updates from DSD
+  /// Stream of network topology updates from DSD (neighbor sites)
   /// 
   /// Each event is a Map containing:
   /// - neighborCount: int (number of neighbor sites)
   /// - neighborFreqs: List<int> (neighbor site frequencies in Hz)
-  /// - patchCount: int (number of active patches)
+  /// - neighborLastSeen: List<int> (timestamps for each neighbor)
   Stream<Map<String, dynamic>> get networkEventStream {
     return DsdFlutterPlatform.instance.networkEventStream;
+  }
+  
+  /// Stream of patch updates from DSD
+  /// 
+  /// Each event is a Map containing:
+  /// - patchCount: int (number of active patches)
+  /// - patches: List<Map> (patch details including SGID, WGIDs, WUIDs, encryption info)
+  Stream<Map<String, dynamic>> get patchEventStream {
+    return DsdFlutterPlatform.instance.patchEventStream;
+  }
+  
+  /// Stream of group attachment updates from DSD
+  /// 
+  /// Each event is a Map containing:
+  /// - gaCount: int (number of group attachments)
+  /// - attachments: List<Map> (RID, TG, and last seen timestamp for each)
+  Stream<Map<String, dynamic>> get groupAttachmentEventStream {
+    return DsdFlutterPlatform.instance.groupAttachmentEventStream;
+  }
+  
+  /// Stream of affiliation updates from DSD
+  /// 
+  /// Each event is a Map containing:
+  /// - affCount: int (number of affiliated radios)
+  /// - affiliations: List<Map> (RID and last seen timestamp for each)
+  Stream<Map<String, dynamic>> get affiliationEventStream {
+    return DsdFlutterPlatform.instance.affiliationEventStream;
   }
   
   /// Set the talkgroup filter mode

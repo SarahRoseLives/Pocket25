@@ -42,6 +42,9 @@ static jmethodID g_send_call_event_method = nullptr;
 static jmethodID g_send_site_event_method = nullptr;
 static jmethodID g_send_signal_event_method = nullptr;
 static jmethodID g_send_network_event_method = nullptr;
+static jmethodID g_send_patch_event_method = nullptr;
+static jmethodID g_send_ga_event_method = nullptr;
+static jmethodID g_send_aff_event_method = nullptr;
 
 // Last known call state for change detection
 static int g_last_tg = 0;
@@ -55,6 +58,9 @@ static int g_last_carrier = 0;
 
 // Last known network state for change detection
 static int g_last_nb_count = 0;
+static int g_last_patch_count = 0;
+static int g_last_ga_count = 0;
+static int g_last_aff_count = 0;
 
 // ============================================================================
 // Talkgroup Filtering (Whitelist/Blacklist)
@@ -287,11 +293,11 @@ static void send_signal_event_to_flutter(
     }
 }
 
-// Send network topology updates to Flutter (neighbor sites, patches, etc.)
-static void send_network_event_to_flutter(
+// Send neighbor sites event to Flutter
+static void send_neighbor_event_to_flutter(
     int neighborCount,
     const long int* neighborFreqs,
-    int patchCount
+    const time_t* neighborLastSeen
 ) {
     if (!g_jvm || !g_plugin_class || !g_send_network_event_method) return;
     
@@ -320,15 +326,272 @@ static void send_network_event_to_flutter(
         delete[] freqs;
     }
     
+    // Convert last seen times to Java long array
+    jlongArray jLastSeen = env->NewLongArray(neighborCount);
+    if (jLastSeen && neighborCount > 0) {
+        jlong* times = new jlong[neighborCount];
+        for (int i = 0; i < neighborCount; i++) {
+            times[i] = (jlong)neighborLastSeen[i];
+        }
+        env->SetLongArrayRegion(jLastSeen, 0, neighborCount, times);
+        delete[] times;
+    }
+    
     env->CallStaticVoidMethod(g_plugin_class, g_send_network_event_method,
         (jint)neighborCount,
         jNeighborFreqs,
-        (jint)patchCount
+        jLastSeen
     );
     
-    if (jNeighborFreqs) {
-        env->DeleteLocalRef(jNeighborFreqs);
+    if (jNeighborFreqs) env->DeleteLocalRef(jNeighborFreqs);
+    if (jLastSeen) env->DeleteLocalRef(jLastSeen);
+    
+    if (attached) {
+        g_jvm->DetachCurrentThread();
     }
+}
+
+// Send patch event to Flutter
+static void send_patch_event_to_flutter(
+    int patchCount,
+    const uint16_t* sgids,
+    const uint8_t* isPatch,
+    const uint8_t* active,
+    const time_t* lastUpdate,
+    const uint8_t* wgidCounts,
+    const uint16_t wgids[][8],
+    const uint8_t* wuidCounts,
+    const uint32_t wuids[][8],
+    const uint16_t* keys,
+    const uint8_t* algs,
+    const uint8_t* keyValid
+) {
+    if (!g_jvm || !g_plugin_class || !g_send_patch_event_method) return;
+    
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    
+    int status = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if (g_jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+            attached = true;
+        } else {
+            return;
+        }
+    } else if (status != JNI_OK) {
+        return;
+    }
+    
+    // Create Java arrays for patch data
+    jintArray jSgids = env->NewIntArray(patchCount);
+    jbooleanArray jIsPatch = env->NewBooleanArray(patchCount);
+    jbooleanArray jActive = env->NewBooleanArray(patchCount);
+    jlongArray jLastUpdate = env->NewLongArray(patchCount);
+    jintArray jWgidCounts = env->NewIntArray(patchCount);
+    jintArray jWuidCounts = env->NewIntArray(patchCount);
+    jintArray jKeys = env->NewIntArray(patchCount);
+    jintArray jAlgs = env->NewIntArray(patchCount);
+    jbooleanArray jKeyValid = env->NewBooleanArray(patchCount);
+    
+    if (patchCount > 0) {
+        jint* sgidsBuf = new jint[patchCount];
+        jboolean* isPatchBuf = new jboolean[patchCount];
+        jboolean* activeBuf = new jboolean[patchCount];
+        jlong* lastUpdateBuf = new jlong[patchCount];
+        jint* wgidCountsBuf = new jint[patchCount];
+        jint* wuidCountsBuf = new jint[patchCount];
+        jint* keysBuf = new jint[patchCount];
+        jint* algsBuf = new jint[patchCount];
+        jboolean* keyValidBuf = new jboolean[patchCount];
+        
+        for (int i = 0; i < patchCount; i++) {
+            sgidsBuf[i] = sgids[i];
+            isPatchBuf[i] = isPatch[i] != 0;
+            activeBuf[i] = active[i] != 0;
+            lastUpdateBuf[i] = lastUpdate[i];
+            wgidCountsBuf[i] = wgidCounts[i];
+            wuidCountsBuf[i] = wuidCounts[i];
+            keysBuf[i] = keys[i];
+            algsBuf[i] = algs[i];
+            keyValidBuf[i] = keyValid[i] != 0;
+        }
+        
+        env->SetIntArrayRegion(jSgids, 0, patchCount, sgidsBuf);
+        env->SetBooleanArrayRegion(jIsPatch, 0, patchCount, isPatchBuf);
+        env->SetBooleanArrayRegion(jActive, 0, patchCount, activeBuf);
+        env->SetLongArrayRegion(jLastUpdate, 0, patchCount, lastUpdateBuf);
+        env->SetIntArrayRegion(jWgidCounts, 0, patchCount, wgidCountsBuf);
+        env->SetIntArrayRegion(jWuidCounts, 0, patchCount, wuidCountsBuf);
+        env->SetIntArrayRegion(jKeys, 0, patchCount, keysBuf);
+        env->SetIntArrayRegion(jAlgs, 0, patchCount, algsBuf);
+        env->SetBooleanArrayRegion(jKeyValid, 0, patchCount, keyValidBuf);
+        
+        delete[] sgidsBuf;
+        delete[] isPatchBuf;
+        delete[] activeBuf;
+        delete[] lastUpdateBuf;
+        delete[] wgidCountsBuf;
+        delete[] wuidCountsBuf;
+        delete[] keysBuf;
+        delete[] algsBuf;
+        delete[] keyValidBuf;
+    }
+    
+    // Convert 2D arrays - flatten WGIDs and WUIDs
+    jintArray jWgids = nullptr;
+    jintArray jWuids = nullptr;
+    
+    if (patchCount > 0) {
+        jWgids = env->NewIntArray(patchCount * 8);
+        jWuids = env->NewIntArray(patchCount * 8);
+        
+        jint* wgidsBuf = new jint[patchCount * 8];
+        jint* wuidsBuf = new jint[patchCount * 8];
+        
+        for (int i = 0; i < patchCount; i++) {
+            for (int j = 0; j < 8; j++) {
+                wgidsBuf[i * 8 + j] = wgids[i][j];
+                wuidsBuf[i * 8 + j] = wuids[i][j];
+            }
+        }
+        
+        env->SetIntArrayRegion(jWgids, 0, patchCount * 8, wgidsBuf);
+        env->SetIntArrayRegion(jWuids, 0, patchCount * 8, wuidsBuf);
+        
+        delete[] wgidsBuf;
+        delete[] wuidsBuf;
+    }
+    
+    env->CallStaticVoidMethod(g_plugin_class, g_send_patch_event_method,
+        (jint)patchCount, jSgids, jIsPatch, jActive, jLastUpdate,
+        jWgidCounts, jWgids, jWuidCounts, jWuids,
+        jKeys, jAlgs, jKeyValid
+    );
+    
+    if (jSgids) env->DeleteLocalRef(jSgids);
+    if (jIsPatch) env->DeleteLocalRef(jIsPatch);
+    if (jActive) env->DeleteLocalRef(jActive);
+    if (jLastUpdate) env->DeleteLocalRef(jLastUpdate);
+    if (jWgidCounts) env->DeleteLocalRef(jWgidCounts);
+    if (jWuidCounts) env->DeleteLocalRef(jWuidCounts);
+    if (jWgids) env->DeleteLocalRef(jWgids);
+    if (jWuids) env->DeleteLocalRef(jWuids);
+    if (jKeys) env->DeleteLocalRef(jKeys);
+    if (jAlgs) env->DeleteLocalRef(jAlgs);
+    if (jKeyValid) env->DeleteLocalRef(jKeyValid);
+    
+    if (attached) {
+        g_jvm->DetachCurrentThread();
+    }
+}
+
+// Send group attachment event to Flutter
+static void send_ga_event_to_flutter(
+    int gaCount,
+    const uint32_t* rids,
+    const uint16_t* tgs,
+    const time_t* lastSeen
+) {
+    if (!g_jvm || !g_plugin_class || !g_send_ga_event_method) return;
+    
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    
+    int status = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if (g_jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+            attached = true;
+        } else {
+            return;
+        }
+    } else if (status != JNI_OK) {
+        return;
+    }
+    
+    jlongArray jRids = env->NewLongArray(gaCount);
+    jintArray jTgs = env->NewIntArray(gaCount);
+    jlongArray jLastSeen = env->NewLongArray(gaCount);
+    
+    if (gaCount > 0) {
+        jlong* ridsBuf = new jlong[gaCount];
+        jint* tgsBuf = new jint[gaCount];
+        jlong* lastSeenBuf = new jlong[gaCount];
+        
+        for (int i = 0; i < gaCount; i++) {
+            ridsBuf[i] = rids[i];
+            tgsBuf[i] = tgs[i];
+            lastSeenBuf[i] = lastSeen[i];
+        }
+        
+        env->SetLongArrayRegion(jRids, 0, gaCount, ridsBuf);
+        env->SetIntArrayRegion(jTgs, 0, gaCount, tgsBuf);
+        env->SetLongArrayRegion(jLastSeen, 0, gaCount, lastSeenBuf);
+        
+        delete[] ridsBuf;
+        delete[] tgsBuf;
+        delete[] lastSeenBuf;
+    }
+    
+    env->CallStaticVoidMethod(g_plugin_class, g_send_ga_event_method,
+        (jint)gaCount, jRids, jTgs, jLastSeen
+    );
+    
+    if (jRids) env->DeleteLocalRef(jRids);
+    if (jTgs) env->DeleteLocalRef(jTgs);
+    if (jLastSeen) env->DeleteLocalRef(jLastSeen);
+    
+    if (attached) {
+        g_jvm->DetachCurrentThread();
+    }
+}
+
+// Send affiliation event to Flutter
+static void send_aff_event_to_flutter(
+    int affCount,
+    const uint32_t* rids,
+    const time_t* lastSeen
+) {
+    if (!g_jvm || !g_plugin_class || !g_send_aff_event_method) return;
+    
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    
+    int status = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        if (g_jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+            attached = true;
+        } else {
+            return;
+        }
+    } else if (status != JNI_OK) {
+        return;
+    }
+    
+    jlongArray jRids = env->NewLongArray(affCount);
+    jlongArray jLastSeen = env->NewLongArray(affCount);
+    
+    if (affCount > 0) {
+        jlong* ridsBuf = new jlong[affCount];
+        jlong* lastSeenBuf = new jlong[affCount];
+        
+        for (int i = 0; i < affCount; i++) {
+            ridsBuf[i] = rids[i];
+            lastSeenBuf[i] = lastSeen[i];
+        }
+        
+        env->SetLongArrayRegion(jRids, 0, affCount, ridsBuf);
+        env->SetLongArrayRegion(jLastSeen, 0, affCount, lastSeenBuf);
+        
+        delete[] ridsBuf;
+        delete[] lastSeenBuf;
+    }
+    
+    env->CallStaticVoidMethod(g_plugin_class, g_send_aff_event_method,
+        (jint)affCount, jRids, jLastSeen
+    );
+    
+    if (jRids) env->DeleteLocalRef(jRids);
+    if (jLastSeen) env->DeleteLocalRef(jLastSeen);
     
     if (attached) {
         g_jvm->DetachCurrentThread();
@@ -474,18 +737,66 @@ static void* poll_thread_func(void* arg) {
             g_last_carrier = carrier;
         }
         
-        // Check for network topology changes (neighbor sites, patches)
+        // Check for network topology changes (neighbor sites)
         int nb_count = g_state->p25_nb_count;
-        int patch_count = g_state->p25_patch_count;
         
         if (nb_count != g_last_nb_count || nb_count > 0) {
-            send_network_event_to_flutter(
+            send_neighbor_event_to_flutter(
                 nb_count,
                 g_state->p25_nb_freq,
-                patch_count
+                g_state->p25_nb_last_seen
             );
             
             g_last_nb_count = nb_count;
+        }
+        
+        // Check for patch changes
+        int patch_count = g_state->p25_patch_count;
+        
+        if (patch_count != g_last_patch_count || patch_count > 0) {
+            send_patch_event_to_flutter(
+                patch_count,
+                g_state->p25_patch_sgid,
+                g_state->p25_patch_is_patch,
+                g_state->p25_patch_active,
+                g_state->p25_patch_last_update,
+                g_state->p25_patch_wgid_count,
+                g_state->p25_patch_wgid,
+                g_state->p25_patch_wuid_count,
+                g_state->p25_patch_wuid,
+                g_state->p25_patch_key,
+                g_state->p25_patch_alg,
+                g_state->p25_patch_key_valid
+            );
+            
+            g_last_patch_count = patch_count;
+        }
+        
+        // Check for group attachment changes
+        int ga_count = g_state->p25_ga_count;
+        
+        if (ga_count != g_last_ga_count || ga_count > 0) {
+            send_ga_event_to_flutter(
+                ga_count,
+                g_state->p25_ga_rid,
+                g_state->p25_ga_tg,
+                g_state->p25_ga_last_seen
+            );
+            
+            g_last_ga_count = ga_count;
+        }
+        
+        // Check for affiliation changes
+        int aff_count = g_state->p25_aff_count;
+        
+        if (aff_count != g_last_aff_count || aff_count > 0) {
+            send_aff_event_to_flutter(
+                aff_count,
+                g_state->p25_aff_rid,
+                g_state->p25_aff_last_seen
+            );
+            
+            g_last_aff_count = aff_count;
         }
         
         // Poll every 100ms
@@ -564,7 +875,13 @@ JNI_OnLoad(JavaVM* vm, void* reserved) {
             g_send_signal_event_method = env->GetStaticMethodID(g_plugin_class, "sendSignalEvent",
                 "(IIIZZ)V");
             g_send_network_event_method = env->GetStaticMethodID(g_plugin_class, "sendNetworkEvent",
-                "(I[JI)V");
+                "(I[J[J)V");
+            g_send_patch_event_method = env->GetStaticMethodID(g_plugin_class, "sendPatchEvent",
+                "(I[I[Z[Z[J[I[I[I[I[I[I[Z)V");
+            g_send_ga_event_method = env->GetStaticMethodID(g_plugin_class, "sendGroupAttachmentEvent",
+                "(I[J[I[J)V");
+            g_send_aff_event_method = env->GetStaticMethodID(g_plugin_class, "sendAffiliationEvent",
+                "(I[J[J)V");
             env->DeleteLocalRef(localClass);
             LOGI("Flutter callbacks initialized");
         } else {

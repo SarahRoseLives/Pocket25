@@ -21,11 +21,17 @@ class DsdFlutterPlugin :
     private lateinit var siteEventChannel: EventChannel
     private lateinit var signalEventChannel: EventChannel
     private lateinit var networkEventChannel: EventChannel
+    private lateinit var patchEventChannel: EventChannel
+    private lateinit var groupAttachmentEventChannel: EventChannel
+    private lateinit var affiliationEventChannel: EventChannel
     private var eventSink: EventChannel.EventSink? = null
     private var callEventSink: EventChannel.EventSink? = null
     private var siteEventSink: EventChannel.EventSink? = null
     private var signalEventSink: EventChannel.EventSink? = null
     private var networkEventSink: EventChannel.EventSink? = null
+    private var patchEventSink: EventChannel.EventSink? = null
+    private var groupAttachmentEventSink: EventChannel.EventSink? = null
+    private var affiliationEventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     companion object {
@@ -130,22 +136,141 @@ class DsdFlutterPlugin :
             }
         }
         
-        // Called from JNI to send network topology updates to Flutter
+        // Called from JNI to send network topology updates to Flutter (neighbor sites)
         @JvmStatic
         fun sendNetworkEvent(
             neighborCount: Int,
             neighborFreqs: LongArray?,
-            patchCount: Int
+            neighborLastSeen: LongArray?
         ) {
             instance?.let { plugin ->
                 plugin.mainHandler.post {
                     val freqList = neighborFreqs?.toList() ?: emptyList()
+                    val lastSeenList = neighborLastSeen?.toList() ?: emptyList()
                     val eventMap = mapOf(
                         "neighborCount" to neighborCount,
                         "neighborFreqs" to freqList,
-                        "patchCount" to patchCount
+                        "neighborLastSeen" to lastSeenList
                     )
                     plugin.networkEventSink?.success(eventMap)
+                }
+            }
+        }
+        
+        // Called from JNI to send patch events to Flutter
+        @JvmStatic
+        fun sendPatchEvent(
+            patchCount: Int,
+            sgids: IntArray?,
+            isPatch: BooleanArray?,
+            active: BooleanArray?,
+            lastUpdate: LongArray?,
+            wgidCounts: IntArray?,
+            wgids: IntArray?,
+            wuidCounts: IntArray?,
+            wuids: IntArray?,
+            keys: IntArray?,
+            algs: IntArray?,
+            keyValid: BooleanArray?
+        ) {
+            instance?.let { plugin ->
+                plugin.mainHandler.post {
+                    val patches = mutableListOf<Map<String, Any?>>()
+                    
+                    for (i in 0 until patchCount) {
+                        val wgidCount = wgidCounts?.get(i) ?: 0
+                        val wuidCount = wuidCounts?.get(i) ?: 0
+                        
+                        val patchWgids = mutableListOf<Int>()
+                        val patchWuids = mutableListOf<Long>()
+                        
+                        for (j in 0 until wgidCount) {
+                            wgids?.get(i * 8 + j)?.let { patchWgids.add(it) }
+                        }
+                        
+                        for (j in 0 until wuidCount) {
+                            wuids?.get(i * 8 + j)?.let { patchWuids.add(it.toLong()) }
+                        }
+                        
+                        val patch = mapOf(
+                            "sgid" to (sgids?.get(i) ?: 0),
+                            "isPatch" to (isPatch?.get(i) ?: false),
+                            "active" to (active?.get(i) ?: false),
+                            "lastUpdate" to (lastUpdate?.get(i) ?: 0L),
+                            "wgidCount" to wgidCount,
+                            "wgids" to patchWgids,
+                            "wuidCount" to wuidCount,
+                            "wuids" to patchWuids,
+                            "key" to (keys?.get(i) ?: 0),
+                            "alg" to (algs?.get(i) ?: 0),
+                            "keyValid" to (keyValid?.get(i) ?: false)
+                        )
+                        patches.add(patch)
+                    }
+                    
+                    val eventMap = mapOf(
+                        "patchCount" to patchCount,
+                        "patches" to patches
+                    )
+                    plugin.patchEventSink?.success(eventMap)
+                }
+            }
+        }
+        
+        // Called from JNI to send group attachment events to Flutter
+        @JvmStatic
+        fun sendGroupAttachmentEvent(
+            gaCount: Int,
+            rids: LongArray?,
+            tgs: IntArray?,
+            lastSeen: LongArray?
+        ) {
+            instance?.let { plugin ->
+                plugin.mainHandler.post {
+                    val attachments = mutableListOf<Map<String, Any?>>()
+                    
+                    for (i in 0 until gaCount) {
+                        val attachment = mapOf(
+                            "rid" to (rids?.get(i) ?: 0L),
+                            "tg" to (tgs?.get(i) ?: 0),
+                            "lastSeen" to (lastSeen?.get(i) ?: 0L)
+                        )
+                        attachments.add(attachment)
+                    }
+                    
+                    val eventMap = mapOf(
+                        "gaCount" to gaCount,
+                        "attachments" to attachments
+                    )
+                    plugin.groupAttachmentEventSink?.success(eventMap)
+                }
+            }
+        }
+        
+        // Called from JNI to send affiliation events to Flutter
+        @JvmStatic
+        fun sendAffiliationEvent(
+            affCount: Int,
+            rids: LongArray?,
+            lastSeen: LongArray?
+        ) {
+            instance?.let { plugin ->
+                plugin.mainHandler.post {
+                    val affiliations = mutableListOf<Map<String, Any?>>()
+                    
+                    for (i in 0 until affCount) {
+                        val affiliation = mapOf(
+                            "rid" to (rids?.get(i) ?: 0L),
+                            "lastSeen" to (lastSeen?.get(i) ?: 0L)
+                        )
+                        affiliations.add(affiliation)
+                    }
+                    
+                    val eventMap = mapOf(
+                        "affCount" to affCount,
+                        "affiliations" to affiliations
+                    )
+                    plugin.affiliationEventSink?.success(eventMap)
                 }
             }
         }
@@ -191,6 +316,15 @@ class DsdFlutterPlugin :
         
         networkEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "dsd_flutter/network_events")
         networkEventChannel.setStreamHandler(NetworkEventStreamHandler())
+        
+        patchEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "dsd_flutter/patch_events")
+        patchEventChannel.setStreamHandler(PatchEventStreamHandler())
+        
+        groupAttachmentEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "dsd_flutter/group_attachment_events")
+        groupAttachmentEventChannel.setStreamHandler(GroupAttachmentEventStreamHandler())
+        
+        affiliationEventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "dsd_flutter/affiliation_events")
+        affiliationEventChannel.setStreamHandler(AffiliationEventStreamHandler())
         
         nativeInit()
     }
@@ -342,6 +476,36 @@ class DsdFlutterPlugin :
         
         override fun onCancel(arguments: Any?) {
             networkEventSink = null
+        }
+    }
+    
+    inner class PatchEventStreamHandler : EventChannel.StreamHandler {
+        override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+            patchEventSink = events
+        }
+        
+        override fun onCancel(arguments: Any?) {
+            patchEventSink = null
+        }
+    }
+    
+    inner class GroupAttachmentEventStreamHandler : EventChannel.StreamHandler {
+        override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+            groupAttachmentEventSink = events
+        }
+        
+        override fun onCancel(arguments: Any?) {
+            groupAttachmentEventSink = null
+        }
+    }
+    
+    inner class AffiliationEventStreamHandler : EventChannel.StreamHandler {
+        override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+            affiliationEventSink = events
+        }
+        
+        override fun onCancel(arguments: Any?) {
+            affiliationEventSink = null
         }
     }
 }

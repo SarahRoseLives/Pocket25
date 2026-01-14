@@ -8,6 +8,7 @@ import 'screens/scanner_screen.dart';
 import 'screens/log_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/site_details_screen.dart';
+import 'screens/network_screen.dart';
 import 'services/settings_service.dart';
 import 'services/scanning_service.dart';
 import 'services/database_service.dart';
@@ -314,6 +315,10 @@ class _MainScreenState extends State<MainScreen> {
           scanningService: _scanningService,
         );
       case 3:
+        return NetworkScreen(
+          scanningService: _scanningService,
+        );
+      case 4:
         return SettingsScreen(
           settings: _settingsService,
           dsdPlugin: _dsdFlutterPlugin,
@@ -360,6 +365,10 @@ class _MainScreenState extends State<MainScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.cell_tower),
             label: 'Site',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.lan),
+            label: 'Network',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.settings),
