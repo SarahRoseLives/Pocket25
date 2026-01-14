@@ -981,15 +981,24 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeConnect(
         g_opts->audio_out_type = 0;  // Use platform audio (dsd_audio_*)
         g_opts->audio_out = 1;       // Enable audio output
         
-        // Audio output parameters - 8kHz mono is typical for decoded voice
+        // Audio output parameters - 8kHz stereo for P25 Phase 2 TDMA support
+        // P25 Phase 2 uses two time slots that are mixed to stereo output
         g_opts->pulse_digi_rate_out = 8000;
-        g_opts->pulse_digi_out_channels = 1;  // Mono output
+        g_opts->pulse_digi_out_channels = 2;  // Stereo for P25 Phase 2 dual-slot support
+        
+        // Disable slot 2 to avoid Reed-Solomon errors causing choppy audio
+        // Slot 1 will be duplicated to both channels for smooth playback
+        g_opts->slot1_on = 1;
+        g_opts->slot2_on = 0;
+        g_opts->slot_preference = 0;  // Prefer slot 1
         
         // Enable P25 trunk following for control channel
         g_opts->p25_trunk = 1;
         
         LOGI("Configured for rtl_tcp input: %s", g_opts->audio_in_dev);
-        LOGI("Audio output enabled: %s type=%d", g_opts->audio_out_dev, g_opts->audio_out_type);
+        LOGI("Audio output enabled: %s type=%d slot1=%d slot2=%d", 
+             g_opts->audio_out_dev, g_opts->audio_out_type, 
+             g_opts->slot1_on, g_opts->slot2_on);
     }
     
     env->ReleaseStringUTFChars(host, host_str);
@@ -1309,12 +1318,17 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeOpenRtlSdrUsb(
     // Set up audio_in_dev string for RTL mode (not rtltcp)
     snprintf(g_opts->audio_in_dev, sizeof(g_opts->audio_in_dev), "rtl");
     
-    // Audio output configuration
+    // Audio output configuration - stereo for P25 Phase 2 TDMA support
     snprintf(g_opts->audio_out_dev, sizeof(g_opts->audio_out_dev), "android");
     g_opts->audio_out_type = 0;
     g_opts->audio_out = 1;
     g_opts->pulse_digi_rate_out = 8000;
-    g_opts->pulse_digi_out_channels = 1;
+    g_opts->pulse_digi_out_channels = 2;  // Stereo for P25 Phase 2 dual-slot support
+    
+    // Disable slot 2 to avoid Reed-Solomon errors causing choppy audio
+    g_opts->slot1_on = 1;
+    g_opts->slot2_on = 0;
+    g_opts->slot_preference = 0;  // Prefer slot 1
     
     // Enable P25 trunk following
     g_opts->p25_trunk = 1;

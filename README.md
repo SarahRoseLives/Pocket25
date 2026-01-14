@@ -8,8 +8,8 @@ Download an APK here: https://sarahsforge.dev/products/Pocket25
 
 This application was built with P25 in mind and provides full UI support for:
 
-- **P25 Phase 1** (C4FM modulation)
-- **P25 Phase 2** (TDMA/QPSK modulation) (Pending Testing)
+- **P25 Phase 1** (C4FM modulation) - ✅ Audio working perfectly
+- **P25 Phase 2** (TDMA/QPSK modulation) - ⚠️ Audio is choppy (upstream DSD-Neo limitation, see `P25_PHASE2_AUDIO_ISSUE.md`)
 - **Trunked System Following** - Automatically follows voice traffic across control channels
 - **Conventional Monitoring** - Manual frequency configuration
 - **RadioReference Import** - Easy system configuration from RadioReference.com
@@ -24,15 +24,16 @@ This application was built with P25 in mind and provides full UI support for:
 Under the hood, Pocket25 uses the full DSD-Neo decoder, which means it **technically supports** many more digital voice protocols:
 
 ### Protocols Supported by DSD-Neo:
-- ✅ **P25 Phase 1 & 2** (Full UI support)
-- ⚠️ **DMR** (Tier I/II/III) - Audio works, UI support limited
-- ⚠️ **NXDN** (NXDN48/96) - Audio works, UI support limited
-- ⚠️ **D-STAR** - Audio works, UI support limited
-- ⚠️ **YSF (Yaesu System Fusion)** - Audio works, UI support limited
-- ⚠️ **dPMR** - Audio works, UI support limited
-- ⚠️ **X2-TDMA** - Audio works, UI support limited
-- ⚠️ **ProVoice (EDACS)** - Audio works, UI support limited
-- ⚠️ **M17** - Audio works, UI support limited
+- ✅ **P25 Phase 1** (Full UI support, audio working perfectly)
+- ⚠️ **P25 Phase 2** (Full UI support, audio choppy - see `P25_PHASE2_AUDIO_ISSUE.md`)
+- ❓ **DMR** (Tier I/II/III) - Untested, UI support limited
+- ❓ **NXDN** (NXDN48/96) - Untested, UI support limited
+- ❓ **D-STAR** - Untested, UI support limited
+- ❓ **YSF (Yaesu System Fusion)** - Untested, UI support limited
+- ❓ **dPMR** - Untested, UI support limited
+- ❓ **X2-TDMA** - Untested, UI support limited
+- ❓ **ProVoice (EDACS)** - Untested, UI support limited
+- ❓ **M17** - Untested, UI support limited
 
 **Important Note:** While DSD-Neo will decode these protocols and you'll hear audio, the UI currently displays call information in a P25-centric format. Non-P25 systems may show incomplete or incorrect metadata in the interface.
 
@@ -97,7 +98,8 @@ With your samples, I can build proper UI support for all DSD-Neo protocols!
 ## 🚀 Features
 
 ### Current Features (P25):
-- ✅ Real-time P25 Phase 1 (& in theory 2) decoding
+- ✅ Real-time P25 Phase 1 decoding (audio working perfectly)
+- ⚠️ P25 Phase 2 decoding (audio is choppy - upstream DSD-Neo limitation)
 - ✅ Trunked system following with automatic VC tracking
 - ✅ RadioReference.com system import
 - ✅ Talkgroup whitelist/blacklist filtering

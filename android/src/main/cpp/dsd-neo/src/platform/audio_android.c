@@ -30,8 +30,8 @@
  * Constants
  *============================================================================*/
 
-#define AUDIO_BUFFER_COUNT 2
-#define AUDIO_BUFFER_FRAMES 1024  /* Frames per buffer */
+#define AUDIO_BUFFER_COUNT 4
+#define AUDIO_BUFFER_FRAMES 256  /* Smaller buffers for lower latency */
 
 /*============================================================================
  * Internal Types
@@ -308,8 +308,8 @@ dsd_audio_open_output(const dsd_audio_params* params) {
         }
     }
     
-    /* Allocate ring buffer (hold ~0.5 seconds of audio) */
-    s->ring_size = (size_t)s->sample_rate / 2;
+    /* Allocate ring buffer (hold ~2 seconds of audio for bursty P25 Phase 2) */
+    s->ring_size = (size_t)s->sample_rate * 2;
     s->ring_buffer = calloc(s->ring_size * (size_t)s->channels, sizeof(int16_t));
     if (!s->ring_buffer) {
         set_error("Failed to allocate ring buffer");
@@ -404,6 +404,17 @@ dsd_audio_open_output(const dsd_audio_params* params) {
     
     s->is_playing = 1;
     
+    /* Pre-fill ring buffer with silence (~1 second) to handle Phase 2 bursty audio */
+    pthread_mutex_lock(&s->ring_mutex);
+    size_t prefill_frames = s->ring_size / 2;  // Fill half the ring buffer
+    int16_t* silence_buffer = (int16_t*)calloc(prefill_frames * (size_t)s->channels, sizeof(int16_t));
+    if (silence_buffer) {
+        ring_write(s, silence_buffer, prefill_frames);
+        free(silence_buffer);
+        LOGI("Pre-filled audio buffer with %zu frames of silence", prefill_frames);
+    }
+    pthread_mutex_unlock(&s->ring_mutex);
+    
     /* Prime the buffers with silence to start the callback chain */
     for (int i = 0; i < AUDIO_BUFFER_COUNT; i++) {
         memset(s->buffers[i], 0, s->buffer_size);
@@ -445,38 +456,20 @@ dsd_audio_write(dsd_audio_stream* stream, const int16_t* buffer, size_t frames) 
     
     pthread_mutex_lock(&stream->ring_mutex);
     
-    size_t frames_written = 0;
-    while (frames_written < frames) {
-        size_t free_frames = ring_free(stream);
-        if (free_frames == 0) {
-            /* Wait for space - timeout after 100ms */
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_nsec += 100000000; /* 100ms */
-            if (ts.tv_nsec >= 1000000000) {
-                ts.tv_sec++;
-                ts.tv_nsec -= 1000000000;
-            }
-            int rc = pthread_cond_timedwait(&stream->ring_cond, &stream->ring_mutex, &ts);
-            if (rc != 0) {
-                /* Timeout or error - drop samples */
-                break;
-            }
-            continue;
-        }
-        
-        size_t to_write = frames - frames_written;
-        if (to_write > free_frames) {
-            to_write = free_frames;
-        }
-        
-        ring_write(stream, buffer + frames_written * stream->channels, to_write);
-        frames_written += to_write;
+    size_t free_frames = ring_free(stream);
+    
+    /* If not enough space, advance tail to make room (drop oldest samples) */
+    if (free_frames < frames) {
+        size_t frames_to_drop = frames - free_frames;
+        stream->ring_tail = (stream->ring_tail + frames_to_drop) % stream->ring_size;
     }
+    
+    /* Write all frames - we've guaranteed space */
+    ring_write(stream, buffer, frames);
     
     pthread_mutex_unlock(&stream->ring_mutex);
     
-    return (int)frames_written;
+    return (int)frames;
 }
 
 int
