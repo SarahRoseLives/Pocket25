@@ -45,38 +45,99 @@ class ScannerScreen extends StatelessWidget {
     if (currentCall == null) {
       return Container(
         color: Colors.grey[900],
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                isRunning ? Icons.hearing : Icons.radio,
-                size: 64,
-                color: isRunning ? Colors.green[700] : Colors.grey[700],
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Status header
+            Row(
+              children: [
+                Icon(
+                  isRunning ? Icons.radio : Icons.radio_button_off,
+                  size: 28,
+                  color: isRunning ? Colors.green : Colors.grey[700],
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  isRunning ? 'SCANNING' : 'SCANNER IDLE',
+                  style: TextStyle(
+                    fontSize: 22,
+                    color: isRunning ? Colors.green : Colors.grey[500],
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                if (isRunning) ...[
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 24),
+            
+            // Site information
+            if (isRunning && scanningService.currentSiteName != null) ...[
+              _buildInfoRow(
+                'Site',
+                scanningService.currentSiteName!,
+                Icons.cell_tower,
+                Colors.cyan,
               ),
               const SizedBox(height: 12),
-              Text(
-                isRunning ? 'Monitoring...' : 'Scanner Idle',
-                style: TextStyle(
-                  fontSize: 20,
-                  color: Colors.grey[500],
-                  fontWeight: FontWeight.w300,
-                ),
+            ],
+            
+            // Control Channel
+            if (isRunning && scanningService.currentFrequency != null) ...[
+              _buildInfoRow(
+                'Control Channel',
+                '${scanningService.currentFrequency!.toStringAsFixed(4)} MHz',
+                Icons.settings_input_antenna,
+                Colors.blue,
               ),
-              if (isRunning)
+              if (scanningService.totalChannels > 1) ...[
+                const SizedBox(height: 6),
                 Padding(
-                  padding: const EdgeInsets.only(top: 4),
+                  padding: const EdgeInsets.only(left: 36),
                   child: Text(
-                    'Waiting for call activity',
+                    'Channel ${scanningService.currentChannelIndex + 1} of ${scanningService.totalChannels}',
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.grey[600],
                     ),
                   ),
                 ),
+              ],
+              const SizedBox(height: 12),
             ],
-          ),
+            
+            // Sync Status
+            if (isRunning) ...[
+              _buildInfoRow(
+                'Sync Status',
+                scanningService.hasLock ? 'LOCKED' : 'SEARCHING',
+                scanningService.hasLock ? Icons.lock : Icons.search,
+                scanningService.hasLock ? Colors.green : Colors.orange,
+              ),
+              const SizedBox(height: 12),
+            ],
+            
+            // GPS Hopping Status
+            if (isRunning && scanningService.gpsHoppingEnabled) ...[
+              _buildInfoRow(
+                'GPS Site Hopping',
+                'ENABLED',
+                Icons.my_location,
+                Colors.purple,
+              ),
+            ],
+          ],
         ),
       );
     }
@@ -385,6 +446,51 @@ class ScannerScreen extends StatelessWidget {
           color: Colors.white,
         ),
       ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value, IconData icon, Color color) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: color,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey[500],
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
