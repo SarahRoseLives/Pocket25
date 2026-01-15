@@ -281,17 +281,19 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  Future<void> _stop() async {
-    try {
-      await _dsdFlutterPlugin.stop();
-
-      setState(() {
-        _isRunning = false;
-        _currentCall = null;
-      });
-    } catch (e) {
-      // Handle error
-    }
+  void _stop() {
+    // Defer the stop call to next event loop cycle to prevent blocking current operation
+    Timer.run(() async {
+      try {
+        await _dsdFlutterPlugin.stop();
+        setState(() {
+          _isRunning = false;
+          _currentCall = null;
+        });
+      } catch (e) {
+        // Handle error silently
+      }
+    });
   }
 
   Widget _buildCurrentScreen() {

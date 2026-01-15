@@ -74,6 +74,8 @@ void playSynthesizedVoiceSS3(dsd_opts* opts, dsd_state* state); // short stereo 
 void playSynthesizedVoiceSS4(dsd_opts* opts, dsd_state* state); // short stereo mix 4v2 P25p2
 /** @brief Play synthesized voice (short stereo mix 18V superframe). */
 void playSynthesizedVoiceSS18(dsd_opts* opts, dsd_state* state); // short stereo mix 18V Superframe
+/** @brief Play synthesized voice (short stereo mix single frame P25P2). */
+void playSynthesizedVoiceSS_P25P2(dsd_opts* opts, dsd_state* state); // short stereo mix single frame P25P2
 
 /** @brief Apply float-domain gain to 160-sample block for given slot. */
 void agf(dsd_opts* opts, dsd_state* state, float samp[160], int slot); // float gain control

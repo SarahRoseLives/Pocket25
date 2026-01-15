@@ -1804,6 +1804,78 @@ SS18_END:
     }
 }
 
+// P25 Phase 2 single-frame output - outputs current slot's frame only
+// Called after each individual frame decode to maintain steady ~20ms output cadence
+void
+playSynthesizedVoiceSS_P25P2(dsd_opts* opts, dsd_state* state) {
+    short stereo_samp[320]; // 160 frames * 2 channels
+    memset(stereo_samp, 0, sizeof(stereo_samp));
+
+    // Per-slot audio gating
+    int encL = state->p25_p2_audio_allowed[0] ? 0 : 1;
+    int encR = state->p25_p2_audio_allowed[1] ? 0 : 1;
+
+    if (opts->slot1_on == 0) encL = 1;
+    if (opts->slot2_on == 0) encR = 1;
+
+    unsigned long TGL = (unsigned long)state->lasttg;
+    unsigned long TGR = (unsigned long)state->lasttgR;
+    (void)dsd_audio_group_gate_dual(opts, state, TGL, TGR, encL, encR, &encL, &encR);
+
+    // Both slots off - skip output
+    if (opts->slot1_on == 0 && opts->slot2_on == 0) {
+        return;
+    }
+
+    // Skip if current slot is muted
+    if ((state->currentslot == 0 && encL) || (state->currentslot == 1 && encR)) {
+        return;
+    }
+
+    // Get the current slot's audio buffer
+    short* slot_buf = (state->currentslot == 0) ? state->s_l : state->s_r;
+
+    // Apply HPF if enabled
+    if (opts->use_hpf_d == 1) {
+        if (state->currentslot == 0) {
+            hpf_dL(state, slot_buf, 160);
+        } else {
+            hpf_dR(state, slot_buf, 160);
+        }
+    }
+
+    // Interleave to stereo: put current slot's audio on both channels for mono-compatible output
+    // or on the appropriate channel if both slots are active
+    if (opts->slot1_on && opts->slot2_on && !encL && !encR) {
+        // Both slots active - use proper stereo mapping
+        if (state->currentslot == 0) {
+            audio_mix_interleave_stereo_s16(slot_buf, state->s_r, 160, 0, 1, stereo_samp);
+        } else {
+            audio_mix_interleave_stereo_s16(state->s_l, slot_buf, 160, 1, 0, stereo_samp);
+        }
+    } else {
+        // Single slot - duplicate to both channels
+        audio_mix_interleave_stereo_s16(slot_buf, slot_buf, 160, 0, 0, stereo_samp);
+    }
+
+    // Output audio
+    if (opts->audio_out == 1) {
+        if (opts->audio_out_type == 0) { // Platform audio (OpenSL ES on Android)
+            write_s16_audio(opts, stereo_samp, 160);
+        }
+        if (opts->audio_out_type == 8) { // UDP Audio
+            dsd_udp_audio_hook_blast(opts, state, (size_t)320u * sizeof(short), stereo_samp);
+        }
+        if (opts->audio_out_type == 1) { // File descriptor
+            write_audio_out(opts->audio_out_fd, stereo_samp, (size_t)320u * sizeof(short));
+        }
+    }
+
+    if (opts->wav_out_f != NULL && opts->static_wav_file == 1) {
+        sf_write_short(opts->wav_out_f, stereo_samp, 320);
+    }
+}
+
 //largely borrowed from Boatbod OP25 (simplified single tone ID version)
 void
 soft_tonef(float samp[160], int n, int ID, int AD) {

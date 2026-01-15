@@ -11,6 +11,7 @@ enum ScanningState {
   searching,
   locked,
   error,
+  stopping, // Added to prevent UI interaction during stop
 }
 
 class ScanningService extends ChangeNotifier {
@@ -255,6 +256,11 @@ class ScanningService extends ChangeNotifier {
   }
 
   Future<void> startScanning(int siteId, String siteName, {int? systemId}) async {
+    if (_state == ScanningState.stopping) {
+      if (kDebugMode) print('Cannot start scanning while stopping');
+      return;
+    }
+    
     if (_state != ScanningState.idle) {
       await stopScanning();
     }
@@ -400,10 +406,12 @@ class ScanningService extends ChangeNotifier {
           _settingsService.clearNativeUsbDevice();
           
           // Stop the engine - this will close the USB device internally
+          // Note: _onStop() calls async stop but we can't await it (blocks UI thread)
+          // So we fire it and wait longer to ensure it completes
           _onStop();
           
-          // Wait for engine to fully stop and release USB
-          await Future.delayed(const Duration(milliseconds: 500));
+          // Wait longer for engine to fully stop and release USB (native stop takes 3+ seconds)
+          await Future.delayed(const Duration(milliseconds: 3500));
           
           // Re-open USB device with new frequency
           final devices = await NativeRtlSdrService.listDevices();
@@ -500,6 +508,8 @@ class ScanningService extends ChangeNotifier {
   }
 
   Future<void> stopScanning() async {
+    _setState(ScanningState.stopping);
+    
     _lockCheckTimer?.cancel();
     _lockCheckTimer = null;
     _stopGpsTracking();
@@ -510,7 +520,11 @@ class ScanningService extends ChangeNotifier {
     }
     
     // Stop engine - it will handle closing USB device internally
+    // Note: Can't await stop as it blocks UI thread, so fire and wait
     _onStop();
+    
+    // Wait longer for engine to fully stop (native USB stop takes 3+ seconds)
+    await Future.delayed(const Duration(milliseconds: 3500));
     
     _currentSiteId = null;
     _currentSiteName = null;

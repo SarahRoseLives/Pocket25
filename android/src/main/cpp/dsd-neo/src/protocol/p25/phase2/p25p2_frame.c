@@ -70,18 +70,11 @@ p25_p2_teardown_call(dsd_opts* opts, dsd_state* state) {
     // Flush any partial superframe worth of decoded audio so short calls
     // (or late-entry captures that end before a full superframe) still
     // produce audible output in int16 mode.
+    // NOTE: With frame-by-frame output, audio is already played immediately
+    // after decode, so this flush is no longer needed. Just clear state.
     if (opts && opts->floating_point == 0 && opts->pulse_digi_rate_out == 8000) {
-        int has_l = p25_p2_s16_frames_have_audio(state->s_l4);
-        int has_r = p25_p2_s16_frames_have_audio(state->s_r4);
-        if (has_l || has_r) {
-            // At teardown, slot gates may already be cleared by MAC_END/IDLE.
-            // The s_l4/s_r4 buffers only contain decoded audio when a slot was
-            // allowed at decode time, so use buffer presence as the playback
-            // gate here to avoid dropping the tail of short clear calls.
-            state->p25_p2_audio_allowed[0] = has_l ? 1 : 0;
-            state->p25_p2_audio_allowed[1] = has_r ? 1 : 0;
-            playSynthesizedVoiceSS18(opts, state);
-        }
+        // Frame-by-frame output already handled in process_4V_VC/process_2V_VC
+        // No need to call playSynthesizedVoiceSS18() here anymore
         state->voice_counter[0] = 0;
         state->voice_counter[1] = 0;
     }
@@ -676,6 +669,10 @@ process_4V(dsd_opts* opts, dsd_state* state) {
             // Push into small jitter buffer (slot 1)
             p25_p2_audio_ring_push(state, 1, state->f_r4[0]);
         }
+        // Output single frame immediately
+        if (opts->floating_point == 0 && opts->pulse_digi_rate_out == 8000) {
+            playSynthesizedVoiceSS_P25P2(opts, state);
+        }
     } else {
         // Not allowed: zero both float and short buffers to prevent stale
         // encrypted audio from leaking into SS18 mixer path
@@ -699,6 +696,10 @@ process_4V(dsd_opts* opts, dsd_state* state) {
             memcpy(state->s_r4[(state->voice_counter[1]++) % 18], state->s_r, sizeof(state->s_r));
             memcpy(state->s_r4u[1], state->s_ru, sizeof(state->s_ru));
         }
+        // Output single frame immediately
+        if (opts->floating_point == 0 && opts->pulse_digi_rate_out == 8000) {
+            playSynthesizedVoiceSS_P25P2(opts, state);
+        }
     } else {
         if (state->currentslot == 0) {
             memset(state->f_l4[1], 0, sizeof(state->f_l4[1]));
@@ -720,6 +721,10 @@ process_4V(dsd_opts* opts, dsd_state* state) {
             memcpy(state->s_r4[(state->voice_counter[1]++) % 18], state->s_r, sizeof(state->s_r));
             memcpy(state->s_r4u[2], state->s_ru, sizeof(state->s_ru));
         }
+        // Output single frame immediately
+        if (opts->floating_point == 0 && opts->pulse_digi_rate_out == 8000) {
+            playSynthesizedVoiceSS_P25P2(opts, state);
+        }
     } else {
         if (state->currentslot == 0) {
             memset(state->f_l4[2], 0, sizeof(state->f_l4[2]));
@@ -740,6 +745,10 @@ process_4V(dsd_opts* opts, dsd_state* state) {
             memcpy(state->f_r4[3], state->audio_out_temp_bufR, sizeof(state->audio_out_temp_bufR));
             memcpy(state->s_r4[(state->voice_counter[1]++) % 18], state->s_r, sizeof(state->s_r));
             memcpy(state->s_r4u[3], state->s_ru, sizeof(state->s_ru));
+        }
+        // Output single frame immediately
+        if (opts->floating_point == 0 && opts->pulse_digi_rate_out == 8000) {
+            playSynthesizedVoiceSS_P25P2(opts, state);
         }
     } else {
         if (state->currentslot == 0) {
@@ -1158,6 +1167,10 @@ process_2V(dsd_opts* opts, dsd_state* state) {
             memcpy(state->s_r4[(state->voice_counter[1]++) % 18], state->s_r, sizeof(state->s_r));
             memcpy(state->s_r4u[0], state->s_ru, sizeof(state->s_ru));
         }
+        // Output frame immediately (Android frame-by-frame audio fix)
+        if (opts->floating_point == 0 && opts->pulse_digi_rate_out == 8000) {
+            playSynthesizedVoiceSS_P25P2(opts, state);
+        }
     } else {
         // Not allowed: zero both float and short buffers to prevent stale
         // encrypted audio from leaking into SS18 mixer path
@@ -1182,6 +1195,10 @@ process_2V(dsd_opts* opts, dsd_state* state) {
             memcpy(state->s_r4[(state->voice_counter[1]++) % 18], state->s_r, sizeof(state->s_r));
             memcpy(state->s_r4u[1], state->s_ru, sizeof(state->s_ru));
             p25_p2_audio_ring_push(state, 1, state->f_r4[1]);
+        }
+        // Output single frame immediately
+        if (opts->floating_point == 0 && opts->pulse_digi_rate_out == 8000) {
+            playSynthesizedVoiceSS_P25P2(opts, state);
         }
     } else {
         if (state->currentslot == 0) {
@@ -1489,15 +1506,10 @@ process_P2_DUID(dsd_opts* opts, dsd_state* state) {
         // fprintf (stderr, " VCH0: %d;", state->voice_counter[0]); //debug
         // fprintf (stderr, " VCH1: %d;", state->voice_counter[1]); //debug
 
-        //this works, but may still have an element of 'dual voice stutter' which was my initial complaint, but shouldn't 'lag' during trunking operations (hopefully)
-        if ((state->voice_counter[0] >= 18 || state->voice_counter[1] >= 18) && opts->floating_point == 0
-            && opts->pulse_digi_rate_out == 8000 && ts_counter & 1) {
-            //debug test, see what each counter is at during playback on dual voice
-            // fprintf (stderr, " VC1: %02d; VC2: %02d;", state->voice_counter[0], state->voice_counter[1] );
-
-            playSynthesizedVoiceSS18(opts, state);
-            state->voice_counter[0] = 0; //reset
-            state->voice_counter[1] = 0; //reset
+        // Reset voice counters when they overflow
+        if ((state->voice_counter[0] >= 18 || state->voice_counter[1] >= 18) && ts_counter & 1) {
+            state->voice_counter[0] = 0;
+            state->voice_counter[1] = 0;
         }
 
         //flip slots after each TS processed
