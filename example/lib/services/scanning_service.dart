@@ -4,6 +4,7 @@ import 'package:dsd_flutter/dsd_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/settings_service.dart';
 import '../services/native_rtlsdr_service.dart';
+import '../services/native_hackrf_service.dart';
 import 'database_service.dart';
 
 enum ScanningState {
@@ -450,6 +451,66 @@ class ScanningService extends ChangeNotifier {
           // Start engine with new configuration
           _onStart();
         }
+      } else if (_settingsService.rtlSource == RtlSource.hackrf) {
+        // HackRF mode - use native USB HackRF support
+        if (!NativeHackRfService.isStreaming) {
+          // First time - need to initialize and open device
+          await NativeHackRfService.initialize();
+          
+          final devices = await NativeHackRfService.listDevices();
+          if (devices.isEmpty) {
+            throw Exception('No HackRF USB devices found');
+          }
+          
+          // Open the first HackRF device
+          final success = await NativeHackRfService.openDevice(0);
+          if (!success) {
+            throw Exception('Failed to open HackRF USB device');
+          }
+          
+          if (kDebugMode) {
+            print('Opened HackRF device');
+          }
+          
+          // Configure HackRF
+          await NativeHackRfService.setFrequency(_settingsService.frequencyHz);
+          await NativeHackRfService.setSampleRate(_settingsService.sampleRate);
+          await NativeHackRfService.setLnaGain(_settingsService.hackrfLnaGain);
+          await NativeHackRfService.setVgaGain(_settingsService.hackrfVgaGain);
+          await NativeHackRfService.setBasebandFilterBandwidth(_settingsService.hackrfBandwidth);
+          await NativeHackRfService.setAmpEnable(_settingsService.hackrfAmpEnable);
+          
+          if (kDebugMode) {
+            print('Configured HackRF: freq=${_settingsService.frequencyHz} Hz, '
+                  'sampleRate=${_settingsService.sampleRate} Hz, '
+                  'lnaGain=${_settingsService.hackrfLnaGain} dB, '
+                  'vgaGain=${_settingsService.hackrfVgaGain} dB');
+          }
+          
+          // Start receiving samples
+          // Note: This would require a method to feed samples to DSD
+          // For now, we'll start the HackRF RX and handle samples
+          await NativeHackRfService.startRx((samples) {
+            // TODO: Feed samples to DSD
+            // This requires adding a native method to accept external samples
+            if (kDebugMode) {
+              // print('Received ${samples.length} samples from HackRF');
+            }
+          });
+          
+          // Start the DSD engine (it will expect samples from HackRF)
+          _onStart();
+        } else {
+          // Device already open - retune to new frequency
+          if (kDebugMode) {
+            print('Retuning HackRF to ${_settingsService.frequencyHz} Hz');
+          }
+          
+          await NativeHackRfService.setFrequency(_settingsService.frequencyHz);
+          
+          // No need to restart engine for frequency change
+          notifyListeners();
+        }
       } else {
         // Remote rtl_tcp mode - stop/start approach
         _onStop();
@@ -517,6 +578,15 @@ class ScanningService extends ChangeNotifier {
     // Clear device tracking before stopping - engine will close USB during cleanup
     if (_settingsService.rtlSource == RtlSource.nativeUsb && _settingsService.hasNativeUsbDevice) {
       _settingsService.clearNativeUsbDevice();
+    }
+    
+    // Stop HackRF if running
+    if (_settingsService.rtlSource == RtlSource.hackrf && NativeHackRfService.isStreaming) {
+      await NativeHackRfService.stopRx();
+      await NativeHackRfService.closeDevice();
+      if (kDebugMode) {
+        print('HackRF device closed');
+      }
     }
     
     // Stop engine - it will handle closing USB device internally

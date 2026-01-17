@@ -290,23 +290,33 @@ dmrMS(dsd_opts* opts, dsd_state* state) {
         memcpy(state->f_l4[0], state->audio_out_temp_buf, sizeof(state->audio_out_temp_buf));
         memcpy(state->s_l4[0], state->s_l, sizeof(state->s_l));
         memcpy(state->s_l4u[0], state->s_lu, sizeof(state->s_lu));
+        
+        // Output frame 1 immediately
+        if (opts->floating_point == 0 && opts->pulse_digi_out_channels == 2) {
+            playSynthesizedVoiceSS_DMR(opts, state);
+        }
+        
         processMbeFrame(opts, state, NULL, ambe_fr2, NULL);
         memcpy(state->f_l4[1], state->audio_out_temp_buf, sizeof(state->audio_out_temp_buf));
         memcpy(state->s_l4[1], state->s_l, sizeof(state->s_l));
         memcpy(state->s_l4u[1], state->s_lu, sizeof(state->s_lu));
+        
+        // Output frame 2 immediately
+        if (opts->floating_point == 0 && opts->pulse_digi_out_channels == 2) {
+            playSynthesizedVoiceSS_DMR(opts, state);
+        }
+        
         processMbeFrame(opts, state, NULL, ambe_fr3, NULL);
         memcpy(state->f_l4[2], state->audio_out_temp_buf, sizeof(state->audio_out_temp_buf));
         memcpy(state->s_l4[2], state->s_l, sizeof(state->s_l));
         memcpy(state->s_l4u[2], state->s_lu, sizeof(state->s_lu));
-
-        //TODO: Consider copying f_l to f_r for left and right channel saturation on MS mode
-        if (opts->floating_point == 0) {
-            // memcpy (state->s_r4, state->s_l4, sizeof(state->s_l4));
-            if (opts->pulse_digi_out_channels == 2) {
-                playSynthesizedVoiceSS3(opts, state);
-            }
+        
+        // Output frame 3 immediately
+        if (opts->floating_point == 0 && opts->pulse_digi_out_channels == 2) {
+            playSynthesizedVoiceSS_DMR(opts, state);
         }
 
+        //TODO: Consider copying f_l to f_r for left and right channel saturation on MS mode
         if (opts->floating_point == 1) {
             // memcpy (state->f_r4, state->f_l4, sizeof(state->f_l4));
             if (opts->pulse_digi_out_channels == 2) {
@@ -582,23 +592,33 @@ dmrMSBootstrap(dsd_opts* opts, dsd_state* state) {
     memcpy(state->f_l4[0], state->audio_out_temp_buf, sizeof(state->audio_out_temp_buf));
     memcpy(state->s_l4[0], state->s_l, sizeof(state->s_l));
     memcpy(state->s_l4u[0], state->s_lu, sizeof(state->s_lu));
+    
+    // Output frame 1 immediately
+    if (opts->floating_point == 0 && opts->pulse_digi_out_channels == 2) {
+        playSynthesizedVoiceSS_DMR(opts, state);
+    }
+    
     processMbeFrame(opts, state, NULL, ambe_fr2, NULL);
     memcpy(state->f_l4[1], state->audio_out_temp_buf, sizeof(state->audio_out_temp_buf));
     memcpy(state->s_l4[1], state->s_l, sizeof(state->s_l));
     memcpy(state->s_l4u[1], state->s_lu, sizeof(state->s_lu));
+    
+    // Output frame 2 immediately
+    if (opts->floating_point == 0 && opts->pulse_digi_out_channels == 2) {
+        playSynthesizedVoiceSS_DMR(opts, state);
+    }
+    
     processMbeFrame(opts, state, NULL, ambe_fr3, NULL);
     memcpy(state->f_l4[2], state->audio_out_temp_buf, sizeof(state->audio_out_temp_buf));
     memcpy(state->s_l4[2], state->s_l, sizeof(state->s_l));
     memcpy(state->s_l4u[2], state->s_lu, sizeof(state->s_lu));
-
-    //TODO: Consider copying f_l to f_r for left and right channel saturation on MS mode
-    if (opts->floating_point == 0) {
-        // memcpy (state->s_r4, state->s_l4, sizeof(state->s_l4));
-        if (opts->pulse_digi_out_channels == 2) {
-            playSynthesizedVoiceSS3(opts, state);
-        }
+    
+    // Output frame 3 immediately
+    if (opts->floating_point == 0 && opts->pulse_digi_out_channels == 2) {
+        playSynthesizedVoiceSS_DMR(opts, state);
     }
 
+    //TODO: Consider copying f_l to f_r for left and right channel saturation on MS mode
     if (opts->floating_point == 1) {
         // memcpy (state->f_r4, state->f_l4, sizeof(state->f_l4));
         if (opts->pulse_digi_out_channels == 2) {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import '../services/settings_service.dart';
 import '../services/native_rtlsdr_service.dart';
+import '../services/native_hackrf_service.dart';
 
 class ManualConfigurationScreen extends StatefulWidget {
   final SettingsService settings;
@@ -34,6 +35,8 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
   bool _isConfiguring = false;
   bool _nativeRtlSdrSupported = false;
   List<RtlSdrUsbDevice> _nativeUsbDevices = [];
+  bool _hackrfSupported = false;
+  List<Map<String, dynamic>> _hackrfDevices = [];
   bool _isRunning = false;
 
   @override
@@ -46,6 +49,7 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
     _ppmController = TextEditingController(text: widget.settings.ppm.toString());
     _isRunning = widget.isRunning;
     _checkNativeRtlSdrSupport();
+    _checkHackRfSupport();
   }
   
   @override
@@ -75,6 +79,27 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
     if (mounted) {
       setState(() {
         _nativeUsbDevices = devices;
+      });
+    }
+  }
+  
+  Future<void> _checkHackRfSupport() async {
+    final supported = await NativeHackRfService.isUsbHostSupported();
+    if (mounted) {
+      setState(() {
+        _hackrfSupported = supported;
+      });
+    }
+    if (supported) {
+      await _refreshHackRfDevices();
+    }
+  }
+  
+  Future<void> _refreshHackRfDevices() async {
+    final devices = await NativeHackRfService.listDevices();
+    if (mounted) {
+      setState(() {
+        _hackrfDevices = devices;
       });
     }
   }
@@ -317,6 +342,31 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
                     ),
                   ),
               ],
+              // HackRF option
+              if (_hackrfSupported) ...[
+                RadioListTile<RtlSource>(
+                  title: const Text('Native USB HackRF', style: TextStyle(fontSize: 14)),
+                  subtitle: Text(
+                    _hackrfDevices.isEmpty ? 'No devices found' : '${_hackrfDevices.length} device(s) found',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _hackrfDevices.isNotEmpty ? Colors.green : Colors.orange,
+                    ),
+                  ),
+                  value: RtlSource.hackrf,
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                if (widget.settings.rtlSource == RtlSource.hackrf)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 40),
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('Refresh Devices', style: TextStyle(fontSize: 12)),
+                      onPressed: _refreshHackRfDevices,
+                    ),
+                  ),
+              ],
               RadioListTile<RtlSource>(
                 title: const Text('Remote RTL-TCP Server', style: TextStyle(fontSize: 14)),
                 subtitle: const Text('Connect over network', style: TextStyle(fontSize: 11)),
@@ -466,39 +516,100 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
           enabled: !_isRunning,
         ),
         const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _gainController,
-                decoration: const InputDecoration(
-                  labelText: 'Gain',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        // RTL-SDR specific parameters
+        if (widget.settings.rtlSource != RtlSource.hackrf) ...[
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _gainController,
+                  decoration: const InputDecoration(
+                    labelText: 'Gain',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  style: const TextStyle(fontSize: 14),
+                  keyboardType: TextInputType.number,
+                  enabled: !_isRunning,
                 ),
-                style: const TextStyle(fontSize: 14),
-                keyboardType: TextInputType.number,
-                enabled: !_isRunning,
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: TextField(
-                controller: _ppmController,
-                decoration: const InputDecoration(
-                  labelText: 'PPM',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: _ppmController,
+                  decoration: const InputDecoration(
+                    labelText: 'PPM',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  style: const TextStyle(fontSize: 14),
+                  keyboardType: TextInputType.number,
+                  enabled: !_isRunning,
                 ),
-                style: const TextStyle(fontSize: 14),
-                keyboardType: TextInputType.number,
-                enabled: !_isRunning,
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
+        // HackRF specific parameters
+        if (widget.settings.rtlSource == RtlSource.hackrf) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('LNA Gain', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    Slider(
+                      value: widget.settings.hackrfLnaGain.toDouble(),
+                      min: 0,
+                      max: 40,
+                      divisions: 5,
+                      label: '${widget.settings.hackrfLnaGain} dB',
+                      onChanged: _isRunning ? null : (value) {
+                        widget.settings.updateHackrfLnaGain(value.toInt());
+                        setState(() {});
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('VGA Gain', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    Slider(
+                      value: widget.settings.hackrfVgaGain.toDouble(),
+                      min: 0,
+                      max: 62,
+                      divisions: 31,
+                      label: '${widget.settings.hackrfVgaGain} dB',
+                      onChanged: _isRunning ? null : (value) {
+                        widget.settings.updateHackrfVgaGain(value.toInt());
+                        setState(() {});
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SwitchListTile(
+            title: const Text('RF Amplifier', style: TextStyle(fontSize: 14)),
+            subtitle: const Text('Enable RF amplifier (+14dB)', style: TextStyle(fontSize: 11)),
+            value: widget.settings.hackrfAmpEnable,
+            onChanged: _isRunning ? null : (value) {
+              widget.settings.setHackrfAmpEnable(value);
+              setState(() {});
+            },
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+          ),
+        ],
         const SizedBox(height: 10),
         SwitchListTile(
           title: const Text('Audio Output', style: TextStyle(fontSize: 14)),

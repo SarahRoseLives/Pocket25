@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 enum RtlSource {
   nativeUsb, // Native USB RTL-SDR (built-in, no external app needed)
+  hackrf, // Native USB HackRF (built-in, no external app needed)
   remote, // Connect to remote rtl_tcp server
 }
 
@@ -15,9 +16,15 @@ class SettingsService extends ChangeNotifier {
   int _ppm = 0;
   int _sampleRate = 2400000;  // 2.4 MSPS default
   
-  // Native USB state
+  // Native USB state (RTL-SDR)
   int _nativeUsbFd = -1;
   String _nativeUsbPath = '';
+  
+  // HackRF specific settings
+  int _hackrfLnaGain = 16; // LNA gain 0-40 dB (8 dB steps)
+  int _hackrfVgaGain = 16; // VGA gain 0-62 dB (2 dB steps)
+  int _hackrfBandwidth = 1750000; // Baseband filter bandwidth in Hz
+  bool _hackrfAmpEnable = false; // RF amplifier enable
 
   RtlSource get rtlSource => _rtlSource;
   String get remoteHost => _remoteHost;
@@ -30,6 +37,12 @@ class SettingsService extends ChangeNotifier {
   int get nativeUsbFd => _nativeUsbFd;
   String get nativeUsbPath => _nativeUsbPath;
   bool get hasNativeUsbDevice => _nativeUsbFd >= 0;
+  
+  // HackRF getters
+  int get hackrfLnaGain => _hackrfLnaGain;
+  int get hackrfVgaGain => _hackrfVgaGain;
+  int get hackrfBandwidth => _hackrfBandwidth;
+  bool get hackrfAmpEnable => _hackrfAmpEnable;
   
   int get frequencyHz => (_frequency * 1000000).round();
   
@@ -86,6 +99,27 @@ class SettingsService extends ChangeNotifier {
   void clearNativeUsbDevice() {
     _nativeUsbFd = -1;
     _nativeUsbPath = '';
+    notifyListeners();
+  }
+  
+  // HackRF setters
+  void updateHackrfLnaGain(int value) {
+    _hackrfLnaGain = value;
+    notifyListeners();
+  }
+  
+  void updateHackrfVgaGain(int value) {
+    _hackrfVgaGain = value;
+    notifyListeners();
+  }
+  
+  void updateHackrfBandwidth(int value) {
+    _hackrfBandwidth = value;
+    notifyListeners();
+  }
+  
+  void setHackrfAmpEnable(bool value) {
+    _hackrfAmpEnable = value;
     notifyListeners();
   }
 }

@@ -57,6 +57,11 @@ dependencies:
   wakelock_plus: ^1.2.0
   shelf: ^1.4.2
   network_info_plus: ^7.0.0
+  
+  # HackRF support
+  hackrf_flutter:
+    git:
+      url: https://github.com/SarahRoseLives/hackrf_flutter.git
 
 dev_dependencies:
   integration_test:
