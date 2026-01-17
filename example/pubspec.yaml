@@ -4,6 +4,9 @@ description: "Pocket25 - A P25 Phase 1 Scanner"
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
+# Version format: MAJOR.MINOR.PATCH+BUILD_NUMBER
+version: 1.0.0+2
+
 environment:
   sdk: ^3.10.0
 
@@ -57,6 +60,9 @@ dependencies:
   wakelock_plus: ^1.2.0
   shelf: ^1.4.2
   network_info_plus: ^7.0.0
+  
+  # Package info for version display
+  package_info_plus: ^8.0.0
 
 dev_dependencies:
   integration_test:

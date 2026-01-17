@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../services/settings_service.dart';
 import '../services/scanning_service.dart';
 import 'manual_configuration_screen.dart';
 import 'import_settings_screen.dart';
 import 'web_programmer_screen.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   final SettingsService settings;
   final DsdFlutter dsdPlugin;
   final ScanningService scanningService;
@@ -25,6 +26,26 @@ class SettingsScreen extends StatelessWidget {
     required this.onStop,
     required this.onStatusUpdate,
   });
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  String _version = '...';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    setState(() {
+      _version = '${packageInfo.version}+${packageInfo.buildNumber}';
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -49,12 +70,12 @@ class SettingsScreen extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => ManualConfigurationScreen(
-                      settings: settings,
-                      dsdPlugin: dsdPlugin,
-                      isRunning: isRunning,
-                      onStart: onStart,
-                      onStop: onStop,
-                      onStatusUpdate: onStatusUpdate,
+                      settings: widget.settings,
+                      dsdPlugin: widget.dsdPlugin,
+                      isRunning: widget.isRunning,
+                      onStart: widget.onStart,
+                      onStop: widget.onStop,
+                      onStatusUpdate: widget.onStatusUpdate,
                     ),
                   ),
                 );
@@ -72,10 +93,10 @@ class SettingsScreen extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => ImportSettingsScreen(
-                      scanningService: scanningService,
+                      scanningService: widget.scanningService,
                       onSiteSelected: (siteId, siteName) async {
                         // Start scanning the selected site
-                        await scanningService.startScanning(siteId, siteName);
+                        await widget.scanningService.startScanning(siteId, siteName);
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -117,7 +138,7 @@ class SettingsScreen extends StatelessWidget {
                 showAboutDialog(
                   context: context,
                   applicationName: 'Pocket25',
-                  applicationVersion: '1.0.0',
+                  applicationVersion: _version,
                   applicationLegalese: 'Licensed under GNU GPLv3',
                   children: const [
                     SizedBox(height: 16),
