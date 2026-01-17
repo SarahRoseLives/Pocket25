@@ -55,6 +55,8 @@ dependencies:
   
   # Wakelock to keep screen on
   wakelock_plus: ^1.2.0
+  shelf: ^1.4.2
+  network_info_plus: ^7.0.0
 
 dev_dependencies:
   integration_test:

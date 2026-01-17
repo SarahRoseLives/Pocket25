@@ -1844,19 +1844,9 @@ playSynthesizedVoiceSS_P25P2(dsd_opts* opts, dsd_state* state) {
         }
     }
 
-    // Interleave to stereo: put current slot's audio on both channels for mono-compatible output
-    // or on the appropriate channel if both slots are active
-    if (opts->slot1_on && opts->slot2_on && !encL && !encR) {
-        // Both slots active - use proper stereo mapping
-        if (state->currentslot == 0) {
-            audio_mix_interleave_stereo_s16(slot_buf, state->s_r, 160, 0, 1, stereo_samp);
-        } else {
-            audio_mix_interleave_stereo_s16(state->s_l, slot_buf, 160, 1, 0, stereo_samp);
-        }
-    } else {
-        // Single slot - duplicate to both channels
-        audio_mix_interleave_stereo_s16(slot_buf, slot_buf, 160, 0, 0, stereo_samp);
-    }
+    // Always output current slot's audio on both channels (mono mode)
+    // This ensures smooth playback without waiting for the other slot's timing
+    audio_mix_interleave_stereo_s16(slot_buf, slot_buf, 160, 0, 0, stereo_samp);
 
     // Output audio
     if (opts->audio_out == 1) {

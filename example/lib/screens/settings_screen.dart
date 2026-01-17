@@ -4,6 +4,7 @@ import '../services/settings_service.dart';
 import '../services/scanning_service.dart';
 import 'manual_configuration_screen.dart';
 import 'import_settings_screen.dart';
+import 'web_programmer_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   final SettingsService settings;
@@ -85,6 +86,22 @@ class SettingsScreen extends StatelessWidget {
                         }
                       },
                     ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuTile(
+              context,
+              title: 'Web Programmer',
+              subtitle: 'Configure systems via web browser',
+              icon: Icons.web,
+              iconColor: Colors.green[300]!,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const WebProgrammerScreen(),
                   ),
                 );
               },
