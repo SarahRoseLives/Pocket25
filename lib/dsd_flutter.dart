@@ -1,4 +1,5 @@
 
+import 'dart:typed_data';
 import 'dsd_flutter_platform_interface.dart';
 
 class DsdFlutter {
@@ -62,6 +63,63 @@ class DsdFlutter {
   /// Set gain on native RTL-SDR (in tenths of dB, e.g. 480 = 48.0 dB)
   Future<bool> setNativeRtlGain(int gain) {
     return DsdFlutterPlatform.instance.setNativeRtlGain(gain);
+  }
+  
+  /// List connected HackRF devices
+  Future<List<Map<String, dynamic>>> hackrfListDevices() {
+    return DsdFlutterPlatform.instance.hackrfListDevices();
+  }
+  
+  /// Start HackRF mode - prepares DSD to receive samples from HackRF
+  Future<bool> startHackRfMode(int freqHz, int sampleRate) {
+    return DsdFlutterPlatform.instance.startHackRfMode(freqHz, sampleRate);
+  }
+  
+  /// Set HackRF frequency
+  Future<bool> hackrfSetFrequency(int freqHz) {
+    return DsdFlutterPlatform.instance.hackrfSetFrequency(freqHz);
+  }
+  
+  /// Set HackRF sample rate
+  Future<bool> hackrfSetSampleRate(int sampleRate) {
+    return DsdFlutterPlatform.instance.hackrfSetSampleRate(sampleRate);
+  }
+  
+  /// Set HackRF LNA gain (0-40 dB, 8 dB steps)
+  Future<bool> hackrfSetLnaGain(int gain) {
+    return DsdFlutterPlatform.instance.hackrfSetLnaGain(gain);
+  }
+  
+  /// Set HackRF VGA gain (0-62 dB, 2 dB steps)
+  Future<bool> hackrfSetVgaGain(int gain) {
+    return DsdFlutterPlatform.instance.hackrfSetVgaGain(gain);
+  }
+  
+  /// Start HackRF RX - samples go directly to DSD pipe
+  Future<bool> hackrfStartRx() {
+    return DsdFlutterPlatform.instance.hackrfStartRx();
+  }
+  
+  /// Stop HackRF RX
+  Future<bool> hackrfStopRx() {
+    return DsdFlutterPlatform.instance.hackrfStopRx();
+  }
+  
+  /// Feed HackRF samples to DSD for processing
+  Future<bool> feedHackRfSamples(Uint8List samples) {
+    return DsdFlutterPlatform.instance.feedHackRfSamples(samples);
+  }
+  
+  /// Get the HackRF pipe FD for native sample feeding
+  /// This allows hackrf_flutter to write samples directly to DSD
+  /// without going through Dart's method channel (which is too slow)
+  Future<int> getHackRfPipeFd() {
+    return DsdFlutterPlatform.instance.getHackRfPipeFd();
+  }
+  
+  /// Stop HackRF mode
+  Future<void> stopHackRfMode() {
+    return DsdFlutterPlatform.instance.stopHackRfMode();
   }
   
   /// Stream of log output strings from DSD

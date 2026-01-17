@@ -36,6 +36,7 @@ typedef enum {
     AUDIO_IN_WAV = 2,        ///< WAV/audio file via libsndfile
     AUDIO_IN_RTL = 3,        ///< RTL-SDR dongle (or RTL-TCP)
     AUDIO_IN_SYMBOL_BIN = 4, ///< Dibit symbol capture .bin file
+    AUDIO_IN_FD = 5,         ///< Raw PCM16LE from file descriptor (no libsndfile)
     AUDIO_IN_UDP = 6,        ///< UDP PCM16LE stream
     AUDIO_IN_TCP = 8,        ///< TCP PCM16LE stream
     AUDIO_IN_NULL = 9,       ///< No audio device (special modes)

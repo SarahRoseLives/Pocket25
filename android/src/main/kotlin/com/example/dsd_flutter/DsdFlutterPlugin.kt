@@ -1,13 +1,26 @@
 package com.example.dsd_flutter
 
+import android.content.Context
+import android.hardware.usb.UsbManager
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
+import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import com.mantz_it.hackrf_android.Hackrf
+import com.mantz_it.hackrf_android.HackrfCallbackInterface
+import com.mantz_it.hackrf_android.HackrfUsbException
+import java.io.FileOutputStream
+import java.util.concurrent.ArrayBlockingQueue
+
+// HackRF USB IDs
+private const val HACKRF_VENDOR_ID = 0x1d50
+private const val HACKRF_PRODUCT_ID = 0x6089
 
 /** DsdFlutterPlugin */
 class DsdFlutterPlugin :
@@ -33,6 +46,34 @@ class DsdFlutterPlugin :
     private var groupAttachmentEventSink: EventChannel.EventSink? = null
     private var affiliationEventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    
+    // HackRF support
+    private var appContext: Context? = null
+    private var hackrf: Hackrf? = null
+    private var hackrfRxThread: Thread? = null
+    private var hackrfRxQueue: ArrayBlockingQueue<ByteArray>? = null
+    @Volatile private var hackrfRxRunning = false
+    private var pendingHackrfResult: Result? = null
+    
+    // HackRF callback for initialization
+    private val hackrfCallback = object : HackrfCallbackInterface {
+        override fun onHackrfReady(hackrfInstance: Hackrf) {
+            hackrf = hackrfInstance
+            Log.i("DSD-HackRF", "HackRF initialized successfully")
+            mainHandler.post {
+                pendingHackrfResult?.success(true)
+                pendingHackrfResult = null
+            }
+        }
+        
+        override fun onHackrfError(message: String) {
+            Log.e("DSD-HackRF", "HackRF init error: $message")
+            mainHandler.post {
+                pendingHackrfResult?.error("HACKRF_ERROR", message, null)
+                pendingHackrfResult = null
+            }
+        }
+    }
 
     companion object {
         private var instance: DsdFlutterPlugin? = null
@@ -289,6 +330,12 @@ class DsdFlutterPlugin :
     private external fun nativeSetRtlSdrFrequency(frequency: Long): Boolean
     private external fun nativeSetRtlSdrGain(gain: Int): Boolean
     
+    // HackRF native methods
+    private external fun nativeStartHackRfMode(frequency: Long, sampleRate: Int): Boolean
+    private external fun nativeGetHackRfPipeFd(): Int
+    private external fun nativeFeedHackRfSamples(samples: ByteArray): Boolean
+    private external fun nativeStopHackRfMode()
+    
     // Talkgroup filter native methods
     private external fun nativeSetFilterMode(mode: Int)
     private external fun nativeSetFilterTalkgroups(talkgroups: IntArray?)
@@ -299,6 +346,7 @@ class DsdFlutterPlugin :
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
+        appContext = flutterPluginBinding.applicationContext
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "dsd_flutter")
         channel.setMethodCallHandler(this)
         
@@ -381,6 +429,175 @@ class DsdFlutterPlugin :
             "setNativeRtlGain" -> {
                 val gain = call.argument<Int>("gain") ?: 0
                 result.success(nativeSetRtlSdrGain(gain))
+            }
+            "hackrfListDevices" -> {
+                val devices = mutableListOf<Map<String, Any>>()
+                try {
+                    val usbManager = appContext?.getSystemService(Context.USB_SERVICE) as? UsbManager
+                    Log.i("DSD-HackRF", "hackrfListDevices: usbManager=$usbManager, appContext=$appContext")
+                    if (usbManager != null) {
+                        Log.i("DSD-HackRF", "USB device count: ${usbManager.deviceList.size}")
+                        for (device in usbManager.deviceList.values) {
+                            Log.i("DSD-HackRF", "Found USB device: vid=${device.vendorId} (0x${device.vendorId.toString(16)}), pid=${device.productId} (0x${device.productId.toString(16)})")
+                            if (device.vendorId == HACKRF_VENDOR_ID && device.productId == HACKRF_PRODUCT_ID) {
+                                Log.i("DSD-HackRF", "HackRF detected at ${device.deviceName}")
+                                // Don't access productName/manufacturerName/serialNumber - requires permission
+                                // Just return what we can without permission
+                                devices.add(mapOf(
+                                    "index" to devices.size,
+                                    "name" to "HackRF One",
+                                    "manufacturer" to "Great Scott Gadgets",
+                                    "serial" to "",
+                                    "deviceName" to device.deviceName,
+                                    "hasPermission" to usbManager.hasPermission(device)
+                                ))
+                            }
+                        }
+                    } else {
+                        Log.e("DSD-HackRF", "UsbManager is null!")
+                    }
+                } catch (e: Exception) {
+                    Log.e("DSD-HackRF", "Error listing devices: ${e.message}")
+                    e.printStackTrace()
+                }
+                Log.i("DSD-HackRF", "Returning ${devices.size} HackRF devices")
+                result.success(devices)
+            }
+            "startHackRfMode" -> {
+                val freqHz = call.argument<Number>("freqHz")?.toLong() ?: 0L
+                val sampleRate = call.argument<Int>("sampleRate") ?: 2400000
+                
+                // First start the native pipe mode
+                val pipeSuccess = nativeStartHackRfMode(freqHz, sampleRate)
+                if (!pipeSuccess) {
+                    result.error("PIPE_ERROR", "Failed to create HackRF pipe", null)
+                    return
+                }
+                
+                // Initialize HackRF if not already done
+                if (hackrf == null) {
+                    if (appContext == null) {
+                        result.error("CONTEXT_ERROR", "Application context not available", null)
+                        return
+                    }
+                    pendingHackrfResult = result
+                    try {
+                        Hackrf.initHackrf(appContext, hackrfCallback, 15)
+                        // Result will be sent via callback
+                    } catch (e: Exception) {
+                        pendingHackrfResult = null
+                        result.error("INIT_ERROR", "Failed to init HackRF: ${e.message}", null)
+                    }
+                } else {
+                    result.success(true)
+                }
+            }
+            "hackrfSetFrequency" -> {
+                val freqHz = call.argument<Number>("freqHz")?.toLong() ?: 0L
+                try {
+                    hackrf?.setFrequency(freqHz)
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("HACKRF_ERROR", "Failed to set frequency: ${e.message}", null)
+                }
+            }
+            "hackrfSetSampleRate" -> {
+                val sampleRate = call.argument<Int>("sampleRate") ?: 2400000
+                try {
+                    // Use divider=1 for standard rates
+                    hackrf?.setSampleRate(sampleRate, 1)
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("HACKRF_ERROR", "Failed to set sample rate: ${e.message}", null)
+                }
+            }
+            "hackrfSetLnaGain" -> {
+                val gain = call.argument<Int>("gain") ?: 16
+                try {
+                    hackrf?.setRxLNAGain(gain)
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("HACKRF_ERROR", "Failed to set LNA gain: ${e.message}", null)
+                }
+            }
+            "hackrfSetVgaGain" -> {
+                val gain = call.argument<Int>("gain") ?: 16
+                try {
+                    hackrf?.setRxVGAGain(gain)
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("HACKRF_ERROR", "Failed to set VGA gain: ${e.message}", null)
+                }
+            }
+            "hackrfStartRx" -> {
+                try {
+                    // Start RX and get the queue
+                    hackrfRxQueue = hackrf?.startRX()
+                    if (hackrfRxQueue == null) {
+                        result.error("HACKRF_ERROR", "Failed to start RX", null)
+                        return
+                    }
+                    
+                    // Start a thread to read from queue and send via JNI to TCP socket
+                    hackrfRxRunning = true
+                    hackrfRxThread = Thread {
+                        Log.i("DSD-HackRF", "RX thread started, sending samples via JNI")
+                        try {
+                            while (hackrfRxRunning) {
+                                val packet = hackrfRxQueue?.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                if (packet != null) {
+                                    // Send samples to native TCP socket via JNI
+                                    nativeFeedHackRfSamples(packet)
+                                    // Return buffer to pool for reuse
+                                    hackrf?.returnBufferToBufferPool(packet)
+                                }
+                            }
+                            
+                            Log.i("DSD-HackRF", "RX thread stopping")
+                        } catch (e: Exception) {
+                            Log.e("DSD-HackRF", "RX thread error: ${e.message}")
+                        }
+                    }
+                    hackrfRxThread?.start()
+                    
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("HACKRF_ERROR", "Failed to start RX: ${e.message}", null)
+                }
+            }
+            "hackrfStopRx" -> {
+                hackrfRxRunning = false
+                try {
+                    hackrf?.stop()
+                    hackrfRxThread?.join(1000)
+                    hackrfRxThread = null
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("HACKRF_ERROR", "Failed to stop RX: ${e.message}", null)
+                }
+            }
+            "getHackRfPipeFd" -> {
+                result.success(nativeGetHackRfPipeFd())
+            }
+            "feedHackRfSamples" -> {
+                val samples = call.argument<ByteArray>("samples")
+                if (samples != null) {
+                    result.success(nativeFeedHackRfSamples(samples))
+                } else {
+                    result.success(false)
+                }
+            }
+            "stopHackRfMode" -> {
+                hackrfRxRunning = false
+                try {
+                    hackrf?.stop()
+                    hackrfRxThread?.join(1000)
+                } catch (e: Exception) {
+                    Log.e("DSD-HackRF", "Error stopping HackRF: ${e.message}")
+                }
+                hackrfRxThread = null
+                nativeStopHackRfMode()
+                result.success(null)
             }
             "setFilterMode" -> {
                 val mode = call.argument<Int>("mode") ?: 0

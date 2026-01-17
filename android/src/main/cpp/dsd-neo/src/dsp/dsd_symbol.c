@@ -48,6 +48,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 extern dsd_socket_t Connect(char* hostname, int portno);
 extern void cleanupAndExit(dsd_opts* opts, dsd_state* state);
@@ -531,6 +532,27 @@ getSymbol(dsd_opts* opts, dsd_state* state, int have_sync) {
                     cleanupAndExit(opts, state);
                     return 0.0f;
                 }
+            }
+        }
+        // Raw fd input - reads PCM16LE directly from file descriptor (no libsndfile)
+        else if (opts->audio_in_type == AUDIO_IN_FD) {
+            short s = 0;
+            ssize_t bytes_read = read(opts->audio_in_fd, &s, sizeof(short));
+            if (bytes_read == sizeof(short)) {
+                if (opts->input_volume_multiplier > 1) {
+                    int v = (int)s * opts->input_volume_multiplier;
+                    if (v > 32767) {
+                        v = 32767;
+                    } else if (v < -32768) {
+                        v = -32768;
+                    }
+                    s = (short)v;
+                }
+                sample = (float)s;
+            } else {
+                // EOF or error
+                cleanupAndExit(opts, state);
+                return 0.0f;
             }
         } else if (opts->audio_in_type == AUDIO_IN_RTL) {
 #ifdef USE_RTLSDR

@@ -629,6 +629,18 @@ openAudioInDevice(dsd_opts* opts) {
         dsd_net_audio_input_hook_udp_stop(opts);
     }
 
+    // If audio_in_type is already set to AUDIO_IN_FD, skip libsndfile initialization
+    // This is used for HackRF pipe input on Android where libsndfile is not available
+    if (opts->audio_in_type == AUDIO_IN_FD) {
+        if (opts->audio_in_fd < 0) {
+            LOG_ERROR("Error, AUDIO_IN_FD mode but audio_in_fd not set\n");
+            return -1;
+        }
+        LOG_INFO("Using direct FD input: fd=%d\n", opts->audio_in_fd);
+        // Skip all libsndfile-based input setup
+        goto audio_input_done;
+    }
+
     char* extension;
     const char ch = '.';
     extension = strrchr(opts->audio_in_dev, ch); //return extension if this is a .wav or .bin file
@@ -648,10 +660,13 @@ openAudioInDevice(dsd_opts* opts) {
         opts->audio_in_file_info->channels = 1;
         opts->audio_in_file_info->seekable = 0;
         opts->audio_in_file_info->format = SF_FORMAT_RAW | SF_FORMAT_PCM_16 | SF_ENDIAN_LITTLE;
-        opts->audio_in_file = sf_open_fd(dsd_fileno(stdin), SFM_READ, opts->audio_in_file_info, 0);
+        
+        // Use audio_in_fd if set (e.g. for HackRF pipe), otherwise use stdin
+        int input_fd = (opts->audio_in_fd >= 0) ? opts->audio_in_fd : dsd_fileno(stdin);
+        opts->audio_in_file = sf_open_fd(input_fd, SFM_READ, opts->audio_in_file_info, 0);
 
         if (opts->audio_in_file == NULL) {
-            LOG_ERROR("Error, couldn't open stdin with libsndfile: %s\n", sf_strerror(NULL));
+            LOG_ERROR("Error, couldn't open fd %d with libsndfile: %s\n", input_fd, sf_strerror(NULL));
             free(opts->audio_in_file_info);
             opts->audio_in_file_info = NULL;
             return -1;
@@ -857,6 +872,8 @@ openAudioInDevice(dsd_opts* opts) {
             return -1;
         }
     }
+
+audio_input_done:
     if (opts->split == 1) {
         fprintf(stderr, "Audio In Device: %s\n", opts->audio_in_dev);
     } else {

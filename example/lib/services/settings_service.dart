@@ -14,7 +14,7 @@ class SettingsService extends ChangeNotifier {
   bool _audioEnabled = true;
   int _gain = 48;
   int _ppm = 0;
-  int _sampleRate = 2400000;  // 2.4 MSPS default
+  int _sampleRate = 1536000;  // 1.536 MSPS - matches DSD rtl_tcp default
   
   // Native USB state (RTL-SDR)
   int _nativeUsbFd = -1;

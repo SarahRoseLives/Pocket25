@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'dsd_flutter_method_channel.dart';
@@ -74,6 +75,61 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
   /// Set gain on native RTL-SDR (in tenths of dB)
   Future<bool> setNativeRtlGain(int gain) {
     throw UnimplementedError('setNativeRtlGain() has not been implemented.');
+  }
+  
+  /// List connected HackRF devices
+  Future<List<Map<String, dynamic>>> hackrfListDevices() {
+    throw UnimplementedError('hackrfListDevices() has not been implemented.');
+  }
+  
+  /// Start HackRF mode with external sample feeding
+  Future<bool> startHackRfMode(int freqHz, int sampleRate) {
+    throw UnimplementedError('startHackRfMode() has not been implemented.');
+  }
+  
+  /// Set HackRF frequency
+  Future<bool> hackrfSetFrequency(int freqHz) {
+    throw UnimplementedError('hackrfSetFrequency() has not been implemented.');
+  }
+  
+  /// Set HackRF sample rate
+  Future<bool> hackrfSetSampleRate(int sampleRate) {
+    throw UnimplementedError('hackrfSetSampleRate() has not been implemented.');
+  }
+  
+  /// Set HackRF LNA gain (0-40 dB, 8 dB steps)
+  Future<bool> hackrfSetLnaGain(int gain) {
+    throw UnimplementedError('hackrfSetLnaGain() has not been implemented.');
+  }
+  
+  /// Set HackRF VGA gain (0-62 dB, 2 dB steps)
+  Future<bool> hackrfSetVgaGain(int gain) {
+    throw UnimplementedError('hackrfSetVgaGain() has not been implemented.');
+  }
+  
+  /// Start HackRF RX - samples go directly to DSD pipe
+  Future<bool> hackrfStartRx() {
+    throw UnimplementedError('hackrfStartRx() has not been implemented.');
+  }
+  
+  /// Stop HackRF RX
+  Future<bool> hackrfStopRx() {
+    throw UnimplementedError('hackrfStopRx() has not been implemented.');
+  }
+  
+  /// Get the HackRF pipe FD for native sample feeding
+  Future<int> getHackRfPipeFd() {
+    throw UnimplementedError('getHackRfPipeFd() has not been implemented.');
+  }
+  
+  /// Feed HackRF samples to DSD
+  Future<bool> feedHackRfSamples(Uint8List samples) {
+    throw UnimplementedError('feedHackRfSamples() has not been implemented.');
+  }
+  
+  /// Stop HackRF mode
+  Future<void> stopHackRfMode() {
+    throw UnimplementedError('stopHackRfMode() has not been implemented.');
   }
   
   /// Stream of log output strings from DSD

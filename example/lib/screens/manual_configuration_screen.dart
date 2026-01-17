@@ -1,8 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import '../services/settings_service.dart';
 import '../services/native_rtlsdr_service.dart';
-import '../services/native_hackrf_service.dart';
 
 class ManualConfigurationScreen extends StatefulWidget {
   final SettingsService settings;
@@ -84,23 +84,42 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
   }
   
   Future<void> _checkHackRfSupport() async {
-    final supported = await NativeHackRfService.isUsbHostSupported();
+    // HackRF support is available on Android with USB host mode
+    if (kDebugMode) {
+      print('_checkHackRfSupport: checking...');
+    }
     if (mounted) {
       setState(() {
-        _hackrfSupported = supported;
+        _hackrfSupported = true;
       });
     }
-    if (supported) {
-      await _refreshHackRfDevices();
-    }
+    // Refresh device list
+    await _refreshHackRfDevices();
   }
   
   Future<void> _refreshHackRfDevices() async {
-    final devices = await NativeHackRfService.listDevices();
-    if (mounted) {
-      setState(() {
-        _hackrfDevices = devices;
-      });
+    try {
+      if (kDebugMode) {
+        print('_refreshHackRfDevices: calling hackrfListDevices...');
+      }
+      final devices = await widget.dsdPlugin.hackrfListDevices();
+      if (kDebugMode) {
+        print('_refreshHackRfDevices: got ${devices.length} devices: $devices');
+      }
+      if (mounted) {
+        setState(() {
+          _hackrfDevices = devices;
+        });
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error listing HackRF devices: $e');
+      }
+      if (mounted) {
+        setState(() {
+          _hackrfDevices = [];
+        });
+      }
     }
   }
 
@@ -158,6 +177,49 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
         if (!success) {
           throw Exception('Failed to configure native RTL-SDR');
         }
+      } else if (widget.settings.rtlSource == RtlSource.hackrf) {
+        // HackRF mode - use direct dsd_flutter HackRF support
+        widget.onStatusUpdate('Initializing HackRF...');
+        
+        if (kDebugMode) print('HackRF: Calling startHackRfMode (initializes HackRF and pipe)...');
+        final dsdSuccess = await widget.dsdPlugin.startHackRfMode(
+          widget.settings.frequencyHz,
+          widget.settings.sampleRate,
+        ).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () => throw Exception('HackRF init timeout'),
+        );
+        if (!dsdSuccess) {
+          throw Exception('Failed to initialize HackRF');
+        }
+        if (kDebugMode) print('HackRF: startHackRfMode done');
+        
+        widget.onStatusUpdate('Configuring HackRF...');
+        
+        if (kDebugMode) print('HackRF: Setting frequency...');
+        await widget.dsdPlugin.hackrfSetFrequency(widget.settings.frequencyHz);
+        if (kDebugMode) print('HackRF: setFrequency done');
+        
+        if (kDebugMode) print('HackRF: Setting sample rate...');
+        await widget.dsdPlugin.hackrfSetSampleRate(widget.settings.sampleRate);
+        if (kDebugMode) print('HackRF: setSampleRate done');
+        
+        if (kDebugMode) print('HackRF: Setting LNA gain...');
+        await widget.dsdPlugin.hackrfSetLnaGain(widget.settings.hackrfLnaGain);
+        if (kDebugMode) print('HackRF: setLnaGain done');
+        
+        if (kDebugMode) print('HackRF: Setting VGA gain...');
+        await widget.dsdPlugin.hackrfSetVgaGain(widget.settings.hackrfVgaGain);
+        if (kDebugMode) print('HackRF: setVgaGain done');
+        
+        widget.onStatusUpdate('Starting HackRF RX...');
+        
+        if (kDebugMode) print('HackRF: Starting RX (native thread writes directly to DSD pipe)...');
+        final rxSuccess = await widget.dsdPlugin.hackrfStartRx();
+        if (!rxSuccess) {
+          throw Exception('Failed to start HackRF RX');
+        }
+        if (kDebugMode) print('HackRF: RX started successfully');
       } else {
         // Remote mode
         final host = _remoteHostController.text;
@@ -383,8 +445,9 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
 
   Widget _buildConnectionCard() {
     final isNativeUsb = widget.settings.rtlSource == RtlSource.nativeUsb;
+    final isHackRf = widget.settings.rtlSource == RtlSource.hackrf;
     
-    // For native USB, show device info instead of connection settings
+    // For native USB RTL-SDR, show device info instead of connection settings
     if (isNativeUsb) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -448,6 +511,79 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
                     Icon(
                       device.hasPermission ? Icons.check_circle : Icons.warning,
                       color: device.hasPermission ? Colors.green : Colors.orange,
+                      size: 18,
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      );
+    }
+    
+    // For HackRF, show device info
+    if (isHackRf) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'USB Device',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          if (_hackrfDevices.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[900]?.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange[700]!),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.usb_off, color: Colors.orange, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'No HackRF devices connected. Please connect a device via USB OTG.',
+                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ...List.generate(_hackrfDevices.length, (index) {
+              final device = _hackrfDevices[index];
+              return Container(
+                margin: EdgeInsets.only(bottom: index < _hackrfDevices.length - 1 ? 8 : 0),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green[900]?.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green[700]!),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.usb, color: Colors.green, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            device['name'] ?? 'HackRF One',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(
+                      Icons.check_circle,
+                      color: Colors.green,
                       size: 18,
                     ),
                   ],

@@ -5,6 +5,10 @@
 #include <cstdio>
 #include <unistd.h>
 #include <cstring>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
 
 #define LOG_TAG "DSD-Flutter"
 #define LOG_TAG_OUTPUT "DSD-Output"
@@ -36,6 +40,11 @@ static pthread_t g_stderr_thread;
 static pthread_t g_poll_thread;
 static bool g_engine_running = false;
 static int g_stderr_pipe[2] = {-1, -1};
+static pthread_t g_hackrf_tcp_server_thread;
+static int g_hackrf_tcp_server_sock = -1;
+static int g_hackrf_tcp_client_sock = -1;
+static bool g_hackrf_tcp_server_running = false;
+static bool g_hackrf_mode = false;
 static jclass g_plugin_class = nullptr;
 static jmethodID g_send_output_method = nullptr;
 static jmethodID g_send_call_event_method = nullptr;
@@ -1020,6 +1029,8 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStart(
         // Log config before starting
         LOGI("Config: audio_in_dev=%s", g_opts->audio_in_dev);
         LOGI("Config: audio_in_type=%d (RTL=%d)", g_opts->audio_in_type, AUDIO_IN_RTL);
+        LOGI("Config: audio_in_fd=%d", g_opts->audio_in_fd);
+        LOGI("Config: wav_sample_rate=%d", g_opts->wav_sample_rate);
         LOGI("Config: rtltcp_enabled=%d", g_opts->rtltcp_enabled);
         LOGI("Config: rtltcp_hostname=%s", g_opts->rtltcp_hostname);
         LOGI("Config: rtltcp_portno=%d", g_opts->rtltcp_portno);
@@ -1471,3 +1482,330 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetRtlSdrGain(
 }
 
 #endif // NATIVE_RTLSDR_ENABLED
+
+// ============================================================================
+// HackRF Sample Feeding Support (rtl_tcp emulation)
+// ============================================================================
+
+// TCP server thread that emulates rtl_tcp protocol for HackRF
+static void* hackrf_tcp_server_thread(void* arg) {
+    LOGI("HackRF TCP server thread started, waiting for connections...");
+    
+    while (g_hackrf_tcp_server_running) {
+        // Accept incoming connection
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        
+        LOGI("Waiting for DSD to connect on 127.0.0.1:1235...");
+        int client_sock = accept(g_hackrf_tcp_server_sock, 
+                                 (struct sockaddr*)&client_addr, 
+                                 &client_len);
+        
+        if (client_sock < 0) {
+            if (g_hackrf_tcp_server_running) {
+                LOGE("Accept failed: %s (errno=%d)", strerror(errno), errno);
+                sleep(1);
+            }
+            continue;
+        }
+        
+        LOGI("DSD connected! Client socket=%d", client_sock);
+        g_hackrf_tcp_client_sock = client_sock;
+        
+        // Send rtl_tcp header: "RTL0" + tuner_type(4) + ngains(4)
+        uint8_t header[12];
+        header[0] = 'R';
+        header[1] = 'T';
+        header[2] = 'L';
+        header[3] = '0';
+        // Tuner type: 0 (unknown) - big endian
+        header[4] = 0;
+        header[5] = 0;
+        header[6] = 0;
+        header[7] = 0;
+        // Number of gains: 0 - big endian
+        header[8] = 0;
+        header[9] = 0;
+        header[10] = 0;
+        header[11] = 0;
+        
+        ssize_t sent = send(client_sock, header, sizeof(header), 0);
+        if (sent != sizeof(header)) {
+            LOGE("Failed to send rtl_tcp header: sent=%zd, expected=%zu, errno=%d (%s)", 
+                 sent, sizeof(header), errno, strerror(errno));
+            close(client_sock);
+            g_hackrf_tcp_client_sock = -1;
+            continue;
+        }
+        
+        LOGI("Sent rtl_tcp header (%zu bytes), ready for sample streaming", sizeof(header));
+        
+        // Keep connection alive - samples are fed via nativeFeedHackRfSamples()
+        while (g_hackrf_tcp_server_running && g_hackrf_tcp_client_sock == client_sock) {
+            // Check if client is still connected
+            uint8_t dummy;
+            ssize_t n = recv(client_sock, &dummy, 1, MSG_DONTWAIT);
+            if (n == 0) {
+                LOGI("Client disconnected cleanly");
+                break;
+            } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                LOGI("Client disconnected with error: %s (errno=%d)", strerror(errno), errno);
+                break;
+            }
+            usleep(100000); // 100ms
+        }
+        
+        if (g_hackrf_tcp_client_sock == client_sock) {
+            close(client_sock);
+            g_hackrf_tcp_client_sock = -1;
+        }
+        LOGI("Client connection closed");
+    }
+    
+    LOGI("HackRF TCP server thread exiting");
+    return nullptr;
+}
+
+// Start HackRF mode - creates a TCP server for rtl_tcp emulation
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStartHackRfMode(
+    JNIEnv* env,
+    jobject thiz,
+    jlong frequency,
+    jint sampleRate) {
+    
+    LOGI("Starting HackRF mode: freq=%lld Hz, sampleRate=%d Hz", (long long)frequency, sampleRate);
+    
+    // Create TCP server socket
+    g_hackrf_tcp_server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (g_hackrf_tcp_server_sock < 0) {
+        LOGE("Failed to create TCP socket: %s", strerror(errno));
+        return JNI_FALSE;
+    }
+    
+    // Set socket options
+    int opt = 1;
+    if (setsockopt(g_hackrf_tcp_server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        LOGE("setsockopt SO_REUSEADDR failed: %s", strerror(errno));
+    }
+    
+    // Bind to localhost:1235
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+    server_addr.sin_port = htons(1235);
+    
+    if (bind(g_hackrf_tcp_server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        LOGE("Failed to bind TCP socket: %s", strerror(errno));
+        close(g_hackrf_tcp_server_sock);
+        g_hackrf_tcp_server_sock = -1;
+        return JNI_FALSE;
+    }
+    
+    // Listen for connections
+    if (listen(g_hackrf_tcp_server_sock, 1) < 0) {
+        LOGE("Failed to listen on TCP socket: %s", strerror(errno));
+        close(g_hackrf_tcp_server_sock);
+        g_hackrf_tcp_server_sock = -1;
+        return JNI_FALSE;
+    }
+    
+    LOGI("HackRF TCP server listening on 127.0.0.1:1235");
+    
+    // Start TCP server thread
+    g_hackrf_tcp_server_running = true;
+    if (pthread_create(&g_hackrf_tcp_server_thread, nullptr, hackrf_tcp_server_thread, nullptr) != 0) {
+        LOGE("Failed to create HackRF TCP server thread");
+        close(g_hackrf_tcp_server_sock);
+        g_hackrf_tcp_server_sock = -1;
+        g_hackrf_tcp_server_running = false;
+        return JNI_FALSE;
+    }
+    
+    // Give server thread time to start accepting connections
+    usleep(100000); // 100ms
+    LOGI("HackRF TCP server thread started and ready");
+    
+    // Initialize DSD options if not already done
+    if (!g_opts) {
+        g_opts = (dsd_opts*)calloc(1, sizeof(dsd_opts));
+        if (!g_opts) {
+            LOGE("Failed to allocate opts");
+            g_hackrf_tcp_server_running = false;
+            pthread_join(g_hackrf_tcp_server_thread, nullptr);
+            close(g_hackrf_tcp_server_sock);
+            g_hackrf_tcp_server_sock = -1;
+            return JNI_FALSE;
+        }
+        initOpts(g_opts);
+    }
+    
+    if (!g_state) {
+        g_state = (dsd_state*)calloc(1, sizeof(dsd_state));
+        if (!g_state) {
+            LOGE("Failed to allocate state");
+            g_hackrf_tcp_server_running = false;
+            pthread_join(g_hackrf_tcp_server_thread, nullptr);
+            close(g_hackrf_tcp_server_sock);
+            g_hackrf_tcp_server_sock = -1;
+            return JNI_FALSE;
+        }
+        initState(g_state);
+    }
+    
+    // Configure for HackRF input via rtl_tcp emulation
+    g_opts->audio_in_type = AUDIO_IN_RTL;
+    snprintf(g_opts->audio_in_dev, sizeof(g_opts->audio_in_dev), "rtltcp");
+    
+    // Set RTL-TCP mode to read HackRF samples from localhost
+    g_opts->rtltcp_enabled = 1;
+    strcpy(g_opts->rtltcp_hostname, "127.0.0.1");
+    g_opts->rtltcp_portno = 1235; // Use non-standard port to avoid conflicts
+    
+    // Set RTL parameters for HackRF - HackRF sends raw IQ that needs FM demod
+    g_opts->rtlsdr_center_freq = (uint32_t)frequency;
+    g_opts->rtl_gain_value = 0; // Will be set via separate calls
+    g_opts->rtlsdr_ppm_error = 0;
+    
+    // DSP parameters for FM demodulation
+    g_opts->rtl_dsp_bw_khz = 48;  // Full bandwidth
+    g_opts->rtl_squelch_level = 0;  // Disabled - wide open for digital
+    g_opts->rtl_volume_multiplier = 2;
+    
+    LOGI("HackRF configured: rtl_tcp mode on %s:%d", g_opts->rtltcp_hostname, g_opts->rtltcp_portno);
+    
+    // Audio output configuration - stereo for P25 Phase 2 TDMA support
+    snprintf(g_opts->audio_out_dev, sizeof(g_opts->audio_out_dev), "android");
+    g_opts->audio_out_type = 0;
+    g_opts->audio_out = 1;
+    g_opts->pulse_digi_rate_out = 8000;
+    g_opts->pulse_digi_out_channels = 2;  // Stereo for P25 Phase 2 dual-slot support
+    
+    // DSP settings - enable all digital modes
+    g_opts->mod_c4fm = 1;
+    g_opts->mod_qpsk = 1;
+    g_opts->mod_gfsk = 1;
+    g_opts->frame_p25p1 = 1;
+    g_opts->frame_p25p2 = 1;
+    g_opts->frame_dmr = 1;
+    g_opts->frame_nxdn48 = 1;
+    g_opts->frame_nxdn96 = 1;
+    g_opts->frame_dstar = 1;
+    
+    // Disable slot 2 to avoid Reed-Solomon errors
+    g_opts->slot1_on = 1;
+    g_opts->slot2_on = 0;
+    g_opts->slot_preference = 0;
+    
+    // Enable P25 trunk following
+    g_opts->p25_trunk = 1;
+    g_opts->p25_is_tuned = 1;
+    
+    g_hackrf_mode = true;
+    
+    LOGI("HackRF mode configured successfully");
+    return JNI_TRUE;
+}
+
+// Get the HackRF TCP server status
+extern "C" JNIEXPORT jint JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeGetHackRfPipeFd(
+    JNIEnv* env,
+    jobject thiz) {
+    
+    // Return the server socket FD (for compatibility, though not used for writing)
+    return g_hackrf_tcp_server_sock;
+}
+
+// Feed samples from HackRF into DSD via TCP
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeFeedHackRfSamples(
+    JNIEnv* env,
+    jobject thiz,
+    jbyteArray samples) {
+    
+    if (!g_hackrf_mode || g_hackrf_tcp_client_sock < 0) {
+        // No client connected yet, just drop samples
+        return JNI_TRUE;
+    }
+    
+    jsize len = env->GetArrayLength(samples);
+    if (len == 0) {
+        return JNI_TRUE;
+    }
+    
+    jbyte* buffer = env->GetByteArrayElements(samples, nullptr);
+    if (!buffer) {
+        LOGE("Failed to get sample buffer");
+        return JNI_FALSE;
+    }
+    
+    // HackRF sends signed 8-bit samples (-128 to +127)
+    // rtl_tcp expects unsigned 8-bit samples (0 to 255)
+    // Convert: unsigned = signed + 128
+    uint8_t* converted = (uint8_t*)malloc(len);
+    if (!converted) {
+        env->ReleaseByteArrayElements(samples, buffer, JNI_ABORT);
+        return JNI_FALSE;
+    }
+    
+    for (jsize i = 0; i < len; i++) {
+        converted[i] = (uint8_t)(buffer[i] + 128);
+    }
+    
+    // Write converted samples to TCP client
+    ssize_t written = send(g_hackrf_tcp_client_sock, converted, len, MSG_NOSIGNAL);
+    
+    free(converted);
+    env->ReleaseByteArrayElements(samples, buffer, JNI_ABORT);
+    
+    if (written < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            // Would block - client reading too slow
+            return JNI_TRUE;
+        } else if (errno == EPIPE || errno == ECONNRESET) {
+            // Client disconnected
+            LOGI("TCP client disconnected (errno=%d)", errno);
+            close(g_hackrf_tcp_client_sock);
+            g_hackrf_tcp_client_sock = -1;
+            return JNI_TRUE;
+        } else {
+            LOGE("TCP send error: %s", strerror(errno));
+            return JNI_FALSE;
+        }
+    }
+    
+    return JNI_TRUE;
+}
+
+// Stop HackRF mode
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStopHackRfMode(
+    JNIEnv* env,
+    jobject thiz) {
+    
+    LOGI("Stopping HackRF mode");
+    
+    g_hackrf_mode = false;
+    g_hackrf_tcp_server_running = false;
+    
+    // Close client connection
+    if (g_hackrf_tcp_client_sock >= 0) {
+        close(g_hackrf_tcp_client_sock);
+        g_hackrf_tcp_client_sock = -1;
+    }
+    
+    // Close server socket
+    if (g_hackrf_tcp_server_sock >= 0) {
+        shutdown(g_hackrf_tcp_server_sock, SHUT_RDWR);
+        close(g_hackrf_tcp_server_sock);
+        g_hackrf_tcp_server_sock = -1;
+    }
+    
+    // Wait for server thread to exit
+    pthread_join(g_hackrf_tcp_server_thread, nullptr);
+    
+    LOGI("HackRF mode stopped");
+}
+

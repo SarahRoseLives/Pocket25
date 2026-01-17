@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -119,6 +120,85 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
       'gain': gain,
     });
     return result ?? false;
+  }
+  
+  @override
+  Future<List<Map<String, dynamic>>> hackrfListDevices() async {
+    final result = await methodChannel.invokeMethod<List<dynamic>>('hackrfListDevices');
+    if (result == null) return [];
+    return result.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+  
+  @override
+  Future<bool> startHackRfMode(int freqHz, int sampleRate) async {
+    final result = await methodChannel.invokeMethod<bool>('startHackRfMode', {
+      'freqHz': freqHz,
+      'sampleRate': sampleRate,
+    });
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> hackrfSetFrequency(int freqHz) async {
+    final result = await methodChannel.invokeMethod<bool>('hackrfSetFrequency', {
+      'freqHz': freqHz,
+    });
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> hackrfSetSampleRate(int sampleRate) async {
+    final result = await methodChannel.invokeMethod<bool>('hackrfSetSampleRate', {
+      'sampleRate': sampleRate,
+    });
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> hackrfSetLnaGain(int gain) async {
+    final result = await methodChannel.invokeMethod<bool>('hackrfSetLnaGain', {
+      'gain': gain,
+    });
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> hackrfSetVgaGain(int gain) async {
+    final result = await methodChannel.invokeMethod<bool>('hackrfSetVgaGain', {
+      'gain': gain,
+    });
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> hackrfStartRx() async {
+    final result = await methodChannel.invokeMethod<bool>('hackrfStartRx');
+    return result ?? false;
+  }
+  
+  @override
+  Future<bool> hackrfStopRx() async {
+    final result = await methodChannel.invokeMethod<bool>('hackrfStopRx');
+    return result ?? false;
+  }
+  
+  @override
+  Future<int> getHackRfPipeFd() async {
+    final result = await methodChannel.invokeMethod<int>('getHackRfPipeFd');
+    return result ?? -1;
+  }
+  
+  @override
+  Future<bool> feedHackRfSamples(Uint8List samples) async {
+    final result = await methodChannel.invokeMethod<bool>('feedHackRfSamples', {
+      'samples': samples,
+    });
+    return result ?? false;
+  }
+  
+  @override
+  Future<void> stopHackRfMode() async {
+    await methodChannel.invokeMethod('stopHackRfMode');
   }
   
   @override
