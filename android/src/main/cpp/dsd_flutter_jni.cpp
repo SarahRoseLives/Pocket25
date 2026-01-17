@@ -1135,13 +1135,18 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetFilterMode(
     jobject thiz,
     jint mode) {
     
-    std::lock_guard<std::mutex> lock(g_filter_mutex);
-    g_filter_mode = static_cast<FilterMode>(mode);
-    LOGI("Filter mode set to: %d", mode);
+    int current_tg = 0;
     
-    // Re-evaluate current call if active
-    if (g_last_tg != 0) {
-        update_audio_for_talkgroup(g_last_tg);
+    {
+        std::lock_guard<std::mutex> lock(g_filter_mutex);
+        g_filter_mode = static_cast<FilterMode>(mode);
+        LOGI("Filter mode set to: %d", mode);
+        current_tg = g_last_tg;
+    } // Mutex released here
+    
+    // Apply filter change immediately if there's an active call
+    if (current_tg != 0) {
+        update_audio_for_talkgroup(current_tg);
     }
 }
 
@@ -1155,26 +1160,32 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetFilterTalkgroups(
     jobject thiz,
     jintArray talkgroups) {
     
-    std::lock_guard<std::mutex> lock(g_filter_mutex);
-    g_filter_talkgroups.clear();
+    int current_tg = 0;
     
-    if (talkgroups != nullptr) {
-        jsize len = env->GetArrayLength(talkgroups);
-        jint* tgs = env->GetIntArrayElements(talkgroups, nullptr);
+    {
+        std::lock_guard<std::mutex> lock(g_filter_mutex);
+        g_filter_talkgroups.clear();
         
-        for (jsize i = 0; i < len; i++) {
-            g_filter_talkgroups.insert(tgs[i]);
+        if (talkgroups != nullptr) {
+            jsize len = env->GetArrayLength(talkgroups);
+            jint* tgs = env->GetIntArrayElements(talkgroups, nullptr);
+            
+            for (jsize i = 0; i < len; i++) {
+                g_filter_talkgroups.insert(tgs[i]);
+            }
+            
+            env->ReleaseIntArrayElements(talkgroups, tgs, 0);
+            LOGI("Filter talkgroups updated: %zu entries", g_filter_talkgroups.size());
+        } else {
+            LOGI("Filter talkgroups cleared");
         }
         
-        env->ReleaseIntArrayElements(talkgroups, tgs, 0);
-        LOGI("Filter talkgroups updated: %zu entries", g_filter_talkgroups.size());
-    } else {
-        LOGI("Filter talkgroups cleared");
-    }
+        current_tg = g_last_tg;
+    } // Mutex released here
     
-    // Re-evaluate current call if active
-    if (g_last_tg != 0) {
-        update_audio_for_talkgroup(g_last_tg);
+    // Apply filter change immediately if there's an active call
+    if (current_tg != 0) {
+        update_audio_for_talkgroup(current_tg);
     }
 }
 
@@ -1187,13 +1198,18 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeAddFilterTalkgroup(
     jobject thiz,
     jint talkgroup) {
     
-    std::lock_guard<std::mutex> lock(g_filter_mutex);
-    g_filter_talkgroups.insert(talkgroup);
-    LOGI("Added TG %d to filter list (now %zu entries)", talkgroup, g_filter_talkgroups.size());
+    int current_tg = 0;
     
-    // Re-evaluate current call if it matches
-    if (g_last_tg == talkgroup) {
-        update_audio_for_talkgroup(g_last_tg);
+    {
+        std::lock_guard<std::mutex> lock(g_filter_mutex);
+        g_filter_talkgroups.insert(talkgroup);
+        LOGI("Added TG %d to filter list (now %zu entries)", talkgroup, g_filter_talkgroups.size());
+        current_tg = g_last_tg;
+    } // Mutex released here
+    
+    // Apply filter change immediately if it affects current call
+    if (current_tg == talkgroup) {
+        update_audio_for_talkgroup(current_tg);
     }
 }
 
@@ -1206,13 +1222,18 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeRemoveFilterTalkgroup(
     jobject thiz,
     jint talkgroup) {
     
-    std::lock_guard<std::mutex> lock(g_filter_mutex);
-    g_filter_talkgroups.erase(talkgroup);
-    LOGI("Removed TG %d from filter list (now %zu entries)", talkgroup, g_filter_talkgroups.size());
+    int current_tg = 0;
     
-    // Re-evaluate current call if it matches
-    if (g_last_tg == talkgroup) {
-        update_audio_for_talkgroup(g_last_tg);
+    {
+        std::lock_guard<std::mutex> lock(g_filter_mutex);
+        g_filter_talkgroups.erase(talkgroup);
+        LOGI("Removed TG %d from filter list (now %zu entries)", talkgroup, g_filter_talkgroups.size());
+        current_tg = g_last_tg;
+    } // Mutex released here
+    
+    // Apply filter change immediately if it affects current call
+    if (current_tg == talkgroup) {
+        update_audio_for_talkgroup(current_tg);
     }
 }
 
@@ -1224,13 +1245,18 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeClearFilterTalkgroups(
     JNIEnv* env,
     jobject thiz) {
     
-    std::lock_guard<std::mutex> lock(g_filter_mutex);
-    g_filter_talkgroups.clear();
-    LOGI("Filter talkgroups cleared");
+    int current_tg = 0;
     
-    // Re-evaluate current call if active
-    if (g_last_tg != 0) {
-        update_audio_for_talkgroup(g_last_tg);
+    {
+        std::lock_guard<std::mutex> lock(g_filter_mutex);
+        g_filter_talkgroups.clear();
+        LOGI("Filter talkgroups cleared");
+        current_tg = g_last_tg;
+    } // Mutex released here
+    
+    // Apply filter change immediately if there's an active call
+    if (current_tg != 0) {
+        update_audio_for_talkgroup(current_tg);
     }
 }
 

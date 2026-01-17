@@ -78,6 +78,8 @@ class _MainScreenState extends State<MainScreen> {
   StreamSubscription<Map<String, dynamic>>? _callEventSubscription;
   StreamSubscription<Map<String, dynamic>>? _siteEventSubscription;
   Timer? _callTimeoutTimer;
+  Timer? _filterSyncTimer;
+  bool _filterSyncPending = false;
 
   @override
   void initState() {
@@ -102,10 +104,24 @@ class _MainScreenState extends State<MainScreen> {
   }
   
   Future<void> _syncMutedTalkgroupsToNative() async {
-    await _dsdFlutterPlugin.setFilterTalkgroups(_mutedTalkgroups.toList());
+    // Debounce: Cancel pending sync and schedule new one
+    _filterSyncTimer?.cancel();
+    _filterSyncPending = true;
+    
+    _filterSyncTimer = Timer(const Duration(milliseconds: 300), () async {
+      if (_filterSyncPending) {
+        _filterSyncPending = false;
+        try {
+          await _dsdFlutterPlugin.setFilterTalkgroups(_mutedTalkgroups.toList());
+        } catch (e) {
+          debugPrint('Error syncing filter to native: $e');
+        }
+      }
+    });
   }
   
   Future<void> _toggleMute(int talkgroup) async {
+    // Update state immediately for responsive UI
     setState(() {
       if (_mutedTalkgroups.contains(talkgroup)) {
         _mutedTalkgroups.remove(talkgroup);
@@ -126,8 +142,8 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
     
-    // Sync to native layer
-    await _syncMutedTalkgroupsToNative();
+    // Sync to native layer with debouncing to prevent blocking during rapid toggles
+    _syncMutedTalkgroupsToNative();
   }
   
   bool _isTalkgroupMuted(int talkgroup) {
@@ -140,6 +156,7 @@ class _MainScreenState extends State<MainScreen> {
     _callEventSubscription?.cancel();
     _siteEventSubscription?.cancel();
     _callTimeoutTimer?.cancel();
+    _filterSyncTimer?.cancel();
     _logScrollController.dispose();
     _scanningService.dispose();
     super.dispose();
