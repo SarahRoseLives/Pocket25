@@ -128,6 +128,12 @@ static void update_audio_for_talkgroup(int tg) {
     }
 }
 
+// Public function to check if voice channel should be followed for a talkgroup
+// Used by DSD-neo to skip voice channel grants for filtered talkgroups
+extern "C" int dsd_flutter_should_follow_tg(int tg) {
+    return should_hear_talkgroup(tg) ? 1 : 0;
+}
+
 // Last known site state for change detection
 static unsigned long long g_last_wacn = 0;
 static unsigned long long g_last_siteid = 0;

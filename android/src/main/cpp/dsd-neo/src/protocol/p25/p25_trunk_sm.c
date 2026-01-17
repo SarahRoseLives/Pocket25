@@ -164,6 +164,9 @@ tg_is_blocked(const dsd_state* state, int tg) {
     return 0;
 }
 
+// External filter check function provided by dsd_flutter
+extern int dsd_flutter_should_follow_tg(int tg);
+
 static int
 grant_allowed(dsd_opts* opts, dsd_state* state, const p25_sm_event_t* ev) {
     if (!opts || !state || !ev) {
@@ -173,6 +176,12 @@ grant_allowed(dsd_opts* opts, dsd_state* state, const p25_sm_event_t* ev) {
     int svc = ev->svc_bits;
     int tg = ev->tg;
     int is_indiv = !ev->is_group;
+
+    // Check talkgroup filter - skip voice channel if filtered (blacklist mode)
+    if (!is_indiv && dsd_flutter_should_follow_tg(tg) == 0) {
+        sm_log(opts, state, "grant-blocked-filter");
+        return 0;
+    }
 
     // Fast path: TG hold check (integer compare)
     if (state->tg_hold != 0) {

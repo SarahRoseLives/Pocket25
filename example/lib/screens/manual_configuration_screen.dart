@@ -84,17 +84,24 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
   }
   
   Future<void> _checkHackRfSupport() async {
-    // HackRF support is available on Android with USB host mode
+    // HackRF support is only available in debug builds (not working yet)
     if (kDebugMode) {
       print('_checkHackRfSupport: checking...');
+      if (mounted) {
+        setState(() {
+          _hackrfSupported = true;
+        });
+      }
+      // Refresh device list
+      await _refreshHackRfDevices();
+    } else {
+      // Hide HackRF in release builds
+      if (mounted) {
+        setState(() {
+          _hackrfSupported = false;
+        });
+      }
     }
-    if (mounted) {
-      setState(() {
-        _hackrfSupported = true;
-      });
-    }
-    // Refresh device list
-    await _refreshHackRfDevices();
   }
   
   Future<void> _refreshHackRfDevices() async {
