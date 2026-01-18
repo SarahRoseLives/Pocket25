@@ -634,6 +634,80 @@ $authXml
     return null;
   }
 
+  Future<Map<int, String>?> getTrsTalkgroupCats(int systemId) async {
+    if (!(isLoggedIn && username != null && password != null)) {
+      errorMessage = "Please login first.";
+      notifyListeners();
+      return null;
+    }
+    
+    if (kDebugMode) {
+      print('=== getTrsTalkgroupCats called for system $systemId ===');
+    }
+    
+    try {
+      final wsdlUrl = "http://api.radioreference.com/soap2/?wsdl&v=latest&s=rpc";
+      final authInfo = _buildAuthInfo(username!, password!);
+      final result = await _soapRequest(wsdlUrl, 'getTrsTalkgroupCats', {
+        'sid': systemId,
+        'authInfo': authInfo,
+      });
+      
+      if (kDebugMode) {
+        print('getTrsTalkgroupCats raw result: $result');
+        if (result != null) {
+          print('Result keys: ${result.keys}');
+        }
+      }
+      
+      if (result != null) {
+        final Map<int, String> categories = {};
+        
+        // The response is structured as: return -> item (array) -> tgCid/tgCname
+        var catData = result['item'];
+        
+        if (catData == null) {
+          // Try alternative structure
+          catData = result['talkgroupCat'];
+        }
+        
+        if (catData != null) {
+          if (catData is List) {
+            for (final cat in catData) {
+              final tgCid = cat['tgCid'];
+              final tgCname = cat['tgCname'];
+              if (tgCid != null && tgCname != null) {
+                categories[int.parse(tgCid.toString())] = tgCname.toString();
+              }
+            }
+          } else if (catData is Map) {
+            final tgCid = catData['tgCid'];
+            final tgCname = catData['tgCname'];
+            if (tgCid != null && tgCname != null) {
+              categories[int.parse(tgCid.toString())] = tgCname.toString();
+            }
+          }
+          
+          if (kDebugMode) {
+            print('Found ${categories.length} talkgroup categories');
+            categories.forEach((id, name) => print('  Category $id: $name'));
+          }
+          
+          return categories;
+        } else {
+          if (kDebugMode) {
+            print('No category data found in result');
+          }
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('ERROR in getTrsTalkgroupCats: $e');
+      }
+    }
+    return null;
+  }
+
   Future<List<List<dynamic>>?> getTrsTalkgroups(int systemId) async {
     if (!(isLoggedIn && username != null && password != null)) {
       errorMessage = "Please login first.";
@@ -679,8 +753,23 @@ $authXml
       
       if (talkgroupData is List) {
         for (final tg in talkgroupData) {
+          // Log first talkgroup to see available fields
+          if (talkgroups.isEmpty && kDebugMode) {
+            print('=== Sample Talkgroup Fields ===');
+            print('Available keys: ${tg.keys}');
+            tg.forEach((key, value) {
+              print('  $key: $value');
+            });
+          }
+          
           if (tg['enc'] == '0' || tg['enc'] == 0) {
-            talkgroups.add([tg['tgDec'], tg['tgAlpha']]);
+            final tgCid = tg['tgCid'];  // Category ID
+            talkgroups.add([
+              tg['tgDec'], 
+              tg['tgAlpha'],
+              tgCid?.toString() ?? '',  // Store category ID
+              tg['tgDescr'] ?? '',      // Store description
+            ]);
           }
         }
         if (kDebugMode) {
@@ -688,8 +777,22 @@ $authXml
         }
       } else if (talkgroupData is Map) {
         final tg = talkgroupData;
+        if (kDebugMode) {
+          print('=== Single Talkgroup Fields ===');
+          print('Available keys: ${tg.keys}');
+          tg.forEach((key, value) {
+            print('  $key: $value');
+          });
+        }
+        
         if (tg['enc'] == '0' || tg['enc'] == 0) {
-          talkgroups.add([tg['tgDec'], tg['tgAlpha']]);
+          final tgCid = tg['tgCid'];
+          talkgroups.add([
+            tg['tgDec'], 
+            tg['tgAlpha'],
+            tgCid?.toString() ?? '',
+            tg['tgDescr'] ?? '',
+          ]);
         }
         if (kDebugMode) {
           print('Processed 1 talkgroup from single map');
@@ -732,6 +835,20 @@ $authXml
       
       // Always try to fetch talkgroups, even if sites failed
       if (kDebugMode) {
+        print('Fetching talkgroup categories for system $systemId...');
+      }
+      
+      // Fetch talkgroup categories first
+      final categoryMap = await getTrsTalkgroupCats(systemId);
+      
+      if (kDebugMode) {
+        if (categoryMap == null) {
+          print('WARNING: getTrsTalkgroupCats returned null - no category data');
+        } else if (categoryMap.isEmpty) {
+          print('WARNING: getTrsTalkgroupCats returned empty map');
+        } else {
+          print('Successfully loaded ${categoryMap.length} categories');
+        }
         print('Fetching talkgroups for system $systemId...');
       }
       
@@ -747,7 +864,7 @@ $authXml
 
       // Insert talkgroups
       if (talkgroupsInfo != null && talkgroupsInfo.isNotEmpty) {
-        await _clearAndInsertTalkgroups(systemId, talkgroupsInfo);
+        await _clearAndInsertTalkgroups(systemId, talkgroupsInfo, categoryMap);
       } else {
         if (kDebugMode) {
           print('No talkgroups to import');
@@ -828,7 +945,7 @@ $authXml
     }
   }
 
-  Future<void> _clearAndInsertTalkgroups(int systemId, List<List<dynamic>> talkgroups) async {
+  Future<void> _clearAndInsertTalkgroups(int systemId, List<List<dynamic>> talkgroups, Map<int, String>? categoryMap) async {
     await _db.clearTalkgroups(systemId);
     
     if (kDebugMode) {
@@ -838,15 +955,28 @@ $authXml
     for (final tg in talkgroups) {
       final tgDecimal = int.parse(tg[0].toString());
       final tgName = tg[1].toString();
+      final tgCidStr = tg.length > 2 ? tg[2].toString() : '';  // Category ID
+      final tgDescr = tg.length > 3 ? tg[3].toString() : '';   // Description
+      
+      // Look up category name from category ID
+      String? categoryName;
+      if (tgCidStr.isNotEmpty && categoryMap != null) {
+        final tgCid = int.tryParse(tgCidStr);
+        if (tgCid != null && tgCid > 0) {
+          categoryName = categoryMap[tgCid];
+        }
+      }
       
       if (kDebugMode && talkgroups.indexOf(tg) < 5) {
-        print('  TG $tgDecimal: $tgName');
+        print('  TG $tgDecimal: $tgName (Category: $categoryName, Descr: $tgDescr)');
       }
       
       await _db.insertTalkgroup(
         systemId,
         tgDecimal,
         tgName,
+        category: categoryName,
+        tag: tgDescr,
       );
     }
     

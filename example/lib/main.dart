@@ -9,6 +9,7 @@ import 'screens/log_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/site_details_screen.dart';
 import 'screens/network_screen.dart';
+import 'screens/scan_grid_screen.dart';
 import 'services/settings_service.dart';
 import 'services/scanning_service.dart';
 import 'services/database_service.dart';
@@ -329,15 +330,39 @@ class _MainScreenState extends State<MainScreen> {
           scrollController: _logScrollController,
         );
       case 2:
+        return ScanGridScreen(
+          scanningService: _scanningService,
+          onMutedTalkgroupsChanged: (mutedTalkgroups) {
+            // Update our local muted set and sync to native
+            _mutedTalkgroups.clear();
+            _mutedTalkgroups.addAll(mutedTalkgroups);
+            _syncMutedTalkgroupsToNative();
+            
+            // Update current and recent calls muted status
+            if (_currentCall != null) {
+              setState(() {
+                _currentCall = _currentCall!.copyWithMuted(_mutedTalkgroups.contains(_currentCall!.talkgroup));
+              });
+            }
+            
+            // Update recent calls
+            setState(() {
+              for (int i = 0; i < _recentCalls.length; i++) {
+                _recentCalls[i] = _recentCalls[i].copyWithMuted(_mutedTalkgroups.contains(_recentCalls[i].talkgroup));
+              }
+            });
+          },
+        );
+      case 3:
         return SiteDetailsScreen(
           siteDetails: _currentSiteDetails,
           scanningService: _scanningService,
         );
-      case 3:
+      case 4:
         return NetworkScreen(
           scanningService: _scanningService,
         );
-      case 4:
+      case 5:
         return SettingsScreen(
           settings: _settingsService,
           dsdPlugin: _dsdFlutterPlugin,
@@ -380,6 +405,10 @@ class _MainScreenState extends State<MainScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.terminal),
             label: 'Log',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.grid_on),
+            label: 'Scan Grid',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.cell_tower),

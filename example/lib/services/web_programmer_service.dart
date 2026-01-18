@@ -111,7 +111,7 @@ class WebProgrammerService {
     // Sites API
     if (request.method == 'GET' && path.startsWith('api/systems/') && 
         path.endsWith('/sites')) {
-      final systemId = int.tryParse(path.split('/')[1]);
+      final systemId = int.tryParse(path.split('/')[2]);
       if (systemId != null) {
         return await _getSitesHandler(systemId);
       }
@@ -119,7 +119,7 @@ class WebProgrammerService {
 
     if (request.method == 'POST' && path.startsWith('api/systems/') && 
         path.endsWith('/sites')) {
-      final systemId = int.tryParse(path.split('/')[1]);
+      final systemId = int.tryParse(path.split('/')[2]);
       if (systemId != null) {
         return await _addSiteHandler(request, systemId);
       }
@@ -144,7 +144,7 @@ class WebProgrammerService {
     // Talkgroups API
     if (request.method == 'GET' && path.startsWith('api/systems/') && 
         path.endsWith('/talkgroups')) {
-      final systemId = int.tryParse(path.split('/')[1]);
+      final systemId = int.tryParse(path.split('/')[2]);
       if (systemId != null) {
         return await _getTalkgroupsHandler(systemId);
       }
@@ -152,7 +152,7 @@ class WebProgrammerService {
 
     if (request.method == 'POST' && path.startsWith('api/systems/') && 
         path.endsWith('/talkgroups')) {
-      final systemId = int.tryParse(path.split('/')[1]);
+      final systemId = int.tryParse(path.split('/')[2]);
       if (systemId != null) {
         return await _addTalkgroupHandler(request, systemId);
       }
@@ -160,7 +160,7 @@ class WebProgrammerService {
 
     if (request.method == 'PUT' && path.contains('/talkgroups/')) {
       final parts = path.split('/');
-      final systemId = int.tryParse(parts[1]);
+      final systemId = int.tryParse(parts[2]);
       final tgId = int.tryParse(parts.last);
       if (systemId != null && tgId != null) {
         return await _updateTalkgroupHandler(request, systemId, tgId);

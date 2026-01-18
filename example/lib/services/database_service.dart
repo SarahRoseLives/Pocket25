@@ -26,7 +26,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE systems (
@@ -64,6 +64,8 @@ class DatabaseService {
             system_id INTEGER NOT NULL,
             tg_decimal INTEGER NOT NULL,
             tg_name TEXT NOT NULL,
+            tg_category TEXT,
+            tg_tag TEXT,
             filter_status INTEGER DEFAULT 0,
             FOREIGN KEY (system_id) REFERENCES systems (system_id) ON DELETE CASCADE
           )
@@ -95,6 +97,18 @@ class DatabaseService {
             CREATE INDEX IF NOT EXISTS idx_talkgroups_filter ON talkgroups(filter_status)
           ''');
         }
+        if (oldVersion < 3) {
+          // Add category and tag columns to talkgroups table
+          await db.execute('''
+            ALTER TABLE talkgroups ADD COLUMN tg_category TEXT
+          ''');
+          await db.execute('''
+            ALTER TABLE talkgroups ADD COLUMN tg_tag TEXT
+          ''');
+          await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_talkgroups_category ON talkgroups(tg_category)
+          ''');
+        }
       },
     );
   }
@@ -122,12 +136,14 @@ class DatabaseService {
     });
   }
 
-  Future<void> insertTalkgroup(int systemId, int tgDecimal, String tgName) async {
+  Future<void> insertTalkgroup(int systemId, int tgDecimal, String tgName, {String? category, String? tag}) async {
     final db = await database;
     await db.insert('talkgroups', {
       'system_id': systemId,
       'tg_decimal': tgDecimal,
       'tg_name': tgName,
+      'tg_category': category,
+      'tg_tag': tag,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -317,5 +333,32 @@ class DatabaseService {
     
     await setTalkgroupFilterStatus(systemId, tgDecimal, newStatus);
     return newStatus;
+  }
+  
+  /// Get distinct categories for a system
+  Future<List<String>> getTalkgroupCategories(int systemId) async {
+    final db = await database;
+    final results = await db.rawQuery('''
+      SELECT DISTINCT tg_category 
+      FROM talkgroups 
+      WHERE system_id = ? AND tg_category IS NOT NULL AND tg_category != ''
+      ORDER BY tg_category
+    ''', [systemId]);
+    
+    return results
+        .map((row) => row['tg_category'] as String)
+        .where((cat) => cat.isNotEmpty)
+        .toList();
+  }
+  
+  /// Get talkgroups filtered by category
+  Future<List<Map<String, dynamic>>> getTalkgroupsByCategory(int systemId, String category) async {
+    final db = await database;
+    return await db.query(
+      'talkgroups',
+      where: 'system_id = ? AND tg_category = ?',
+      whereArgs: [systemId, category],
+      orderBy: 'tg_decimal',
+    );
   }
 }
