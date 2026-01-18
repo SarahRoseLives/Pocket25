@@ -29,21 +29,6 @@ class LogScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('DSD Log'),
         backgroundColor: Colors.blueGrey[900],
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.vertical_align_bottom),
-            onPressed: () {
-              if (scrollController.hasClients) {
-                scrollController.animateTo(
-                  scrollController.position.maxScrollExtent,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOut,
-                );
-              }
-            },
-            tooltip: 'Jump to bottom',
-          ),
-        ],
       ),
       body: Container(
         color: Colors.black,
