@@ -172,7 +172,24 @@ $authXml
       );
       
       if (response.statusCode == 200 || response.statusCode == 500) {
-        final document = XmlDocument.parse(response.body);
+        // Validate response body before parsing
+        if (response.body.trim().isEmpty) {
+          if (kDebugMode) {
+            print('SOAP Response Error: Empty response body');
+          }
+          return {'fault': 'Empty response from server'};
+        }
+        
+        final XmlDocument document;
+        try {
+          document = XmlDocument.parse(response.body);
+        } catch (parseError) {
+          if (kDebugMode) {
+            print('XML Parse Error: $parseError');
+            print('Response body (first 500 chars): ${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}');
+          }
+          return {'fault': 'Invalid XML response from server: $parseError'};
+        }
         
         // Check for SOAP Fault
         final faultNode = document.findAllElements('faultstring').firstOrNull;

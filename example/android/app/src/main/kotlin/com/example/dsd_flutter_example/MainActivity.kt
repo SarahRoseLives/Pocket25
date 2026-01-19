@@ -27,6 +27,7 @@ class MainActivity : FlutterActivity() {
     private var usbPermissionResult: MethodChannel.Result? = null
     private var pendingUsbDevice: UsbDevice? = null
     private var currentConnection: UsbDeviceConnection? = null
+    private var fdPassedToNative = false
     
     // Known RTL-SDR Vendor/Product IDs
     private val rtlSdrDevices = listOf(
@@ -126,6 +127,10 @@ class MainActivity : FlutterActivity() {
                 }
                 "getDeviceFd" -> {
                     val fd = currentConnection?.fileDescriptor ?: -1
+                    if (fd != -1) {
+                        fdPassedToNative = true
+                        Log.i(TAG, "FD $fd passed to native code, marking connection as non-closeable")
+                    }
                     result.success(fd)
                 }
                 else -> {
@@ -250,8 +255,10 @@ class MainActivity : FlutterActivity() {
     }
     
     private fun closeCurrentDevice() {
-        currentConnection?.close()
+        // Don't close USB connection - native code (librtlsdr/DSD) owns the FD
+        // Just stop DSD process and it will clean up the device
         currentConnection = null
+        fdPassedToNative = false
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {

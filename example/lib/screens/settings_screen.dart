@@ -3,9 +3,10 @@ import 'package:dsd_flutter/dsd_flutter.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../services/settings_service.dart';
 import '../services/scanning_service.dart';
-import 'manual_configuration_screen.dart';
-import 'import_settings_screen.dart';
-import 'web_programmer_screen.dart';
+import 'system_selection_screen.dart';
+import 'import_manage_screen.dart';
+import 'sdr_settings_screen.dart';
+import 'quick_scan_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final SettingsService settings;
@@ -61,21 +62,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             _buildMenuTile(
               context,
-              title: 'Manual Configuration',
-              subtitle: 'Configure RTL-SDR connection and tuning',
-              icon: Icons.settings_input_antenna,
-              iconColor: Colors.blue[300]!,
+              title: 'Systems',
+              subtitle: 'View and manage systems, select site to scan',
+              icon: Icons.cell_tower,
+              iconColor: Colors.cyan[300]!,
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => ManualConfigurationScreen(
-                      settings: widget.settings,
-                      dsdPlugin: widget.dsdPlugin,
-                      isRunning: widget.isRunning,
-                      onStart: widget.onStart,
-                      onStop: widget.onStop,
-                      onStatusUpdate: widget.onStatusUpdate,
+                    builder: (context) => SystemSelectionScreen(
+                      onSystemSelected: (siteId, siteName) async {
+                        // Start scanning in background to avoid blocking UI thread
+                        Future.microtask(() async {
+                          await widget.scanningService.startScanning(siteId, siteName);
+                        });
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Starting scan: $siteName...'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      },
+                      scanningService: widget.scanningService,
                     ),
                   ),
                 );
@@ -84,28 +94,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 12),
             _buildMenuTile(
               context,
-              title: 'Import Settings',
-              subtitle: 'Import from Radio Reference and manage systems',
+              title: 'Import & Manage',
+              subtitle: 'Import from Radio Reference, Web Programmer',
               icon: Icons.cloud_download,
               iconColor: Colors.purple[300]!,
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => ImportSettingsScreen(
-                      scanningService: widget.scanningService,
-                      onSiteSelected: (siteId, siteName) async {
-                        // Start scanning the selected site
-                        await widget.scanningService.startScanning(siteId, siteName);
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Scanning $siteName...'),
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
-                        }
-                      },
+                    builder: (context) => const ImportManageScreen(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuTile(
+              context,
+              title: 'SDR Settings',
+              subtitle: 'Configure RTL-SDR, HackRF, or RTL-TCP server',
+              icon: Icons.settings_input_antenna,
+              iconColor: Colors.blue[300]!,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => SdrSettingsScreen(
+                      settings: widget.settings,
+                      dsdPlugin: widget.dsdPlugin,
                     ),
                   ),
                 );
@@ -114,15 +129,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 12),
             _buildMenuTile(
               context,
-              title: 'Web Programmer',
-              subtitle: 'Configure systems via web browser',
-              icon: Icons.web,
-              iconColor: Colors.green[300]!,
+              title: 'Quick Scan',
+              subtitle: 'Scan a frequency without creating a system',
+              icon: Icons.radio,
+              iconColor: Colors.orange[300]!,
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const WebProgrammerScreen(),
+                    builder: (context) => QuickScanScreen(
+                      settings: widget.settings,
+                      dsdPlugin: widget.dsdPlugin,
+                      scanningService: widget.scanningService,
+                      isRunning: widget.isRunning,
+                      onStart: widget.onStart,
+                      onStop: widget.onStop,
+                    ),
                   ),
                 );
               },
@@ -133,7 +155,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'About',
               subtitle: 'App version and information',
               icon: Icons.info_outline,
-              iconColor: Colors.cyan[300]!,
+              iconColor: Colors.grey[300]!,
               onTap: () {
                 showAboutDialog(
                   context: context,

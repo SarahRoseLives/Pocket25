@@ -1,10 +1,72 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/settings_service.dart';
 import '../services/native_rtlsdr_service.dart';
 import 'database_service.dart';
+
+/// Helper class for computing nearest site in isolate
+class _NearestSiteParams {
+  final List<Map<String, dynamic>> sites;
+  final double lat;
+  final double lon;
+  final int? currentSiteId;
+  
+  _NearestSiteParams(this.sites, this.lat, this.lon, this.currentSiteId);
+}
+
+/// Result from nearest site computation
+class _NearestSiteResult {
+  final int? siteId;
+  final String? siteName;
+  final double distance;
+  
+  _NearestSiteResult(this.siteId, this.siteName, this.distance);
+}
+
+/// Haversine distance calculation (doesn't require Geolocator)
+double _haversineDistance(double lat1, double lon1, double lat2, double lon2) {
+  const earthRadius = 6371000.0; // meters
+  final dLat = (lat2 - lat1) * (math.pi / 180);
+  final dLon = (lon2 - lon1) * (math.pi / 180);
+  final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+      math.cos(lat1 * (math.pi / 180)) * math.cos(lat2 * (math.pi / 180)) *
+      math.sin(dLon / 2) * math.sin(dLon / 2);
+  final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  return earthRadius * c;
+}
+
+/// Top-level function for compute() - finds nearest site
+_NearestSiteResult _findNearestSite(_NearestSiteParams params) {
+  Map<String, dynamic>? nearestSite;
+  double nearestDistance = double.infinity;
+  
+  for (final site in params.sites) {
+    final lat = site['latitude'] as double?;
+    final lon = site['longitude'] as double?;
+    
+    if (lat != null && lon != null) {
+      final distance = _haversineDistance(params.lat, params.lon, lat, lon);
+      
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestSite = site;
+      }
+    }
+  }
+  
+  if (nearestSite != null) {
+    return _NearestSiteResult(
+      nearestSite['site_id'] as int,
+      nearestSite['site_name'] as String,
+      nearestDistance,
+    );
+  }
+  
+  return _NearestSiteResult(null, null, double.infinity);
+}
 
 enum ScanningState {
   idle,
@@ -296,15 +358,7 @@ class ScanningService extends ChangeNotifier {
         _currentSystemId = await _db.getSystemIdForSite(siteId);
       }
       
-      // Load all sites for GPS hopping
-      if (_currentSystemId != null) {
-        _allSystemSites = await _db.getSitesBySystem(_currentSystemId!);
-        if (kDebugMode) {
-          print('Loaded ${_allSystemSites.length} sites for system $_currentSystemId');
-        }
-      }
-      
-      // Load control channels for this site
+      // Load control channels for this site first (needed immediately)
       _controlChannels = await _db.getControlChannels(siteId);
       
       if (_controlChannels.isEmpty) {
@@ -324,6 +378,12 @@ class ScanningService extends ChangeNotifier {
       
       // Start lock check timer
       _lockCheckTimer = Timer.periodic(const Duration(seconds: 5), _checkLockStatus);
+      
+      // Load all sites for GPS hopping in background (deferred - not blocking UI)
+      if (_currentSystemId != null) {
+        // Use unawaited to load sites asynchronously without blocking
+        _loadSitesForGpsHopping(_currentSystemId!);
+      }
       
       // Start GPS tracking if hopping is enabled
       if (_gpsHoppingEnabled) {
@@ -589,30 +649,55 @@ class ScanningService extends ChangeNotifier {
       }
     }
     
-    // Stop engine - it will handle closing USB device internally
-    // Note: Can't await stop as it blocks UI thread, so fire and wait
-    _onStop();
-    
-    // Wait longer for engine to fully stop (native USB stop takes 3+ seconds)
-    await Future.delayed(const Duration(milliseconds: 3500));
-    
-    _currentSiteId = null;
-    _currentSiteName = null;
-    _currentFrequency = null;
-    _currentChannelIndex = 0;
-    _controlChannels = [];
-    _hasLock = false;
-    _lastActivityTime = null;
+    // Clear state immediately for responsive UI
+    _clearSystemState();
     _setState(ScanningState.idle);
+    
+    // Stop engine - it will handle closing USB device internally
+    // Note: Can't await stop as it blocks UI thread, so fire and forget
+    _onStop();
     
     if (kDebugMode) {
       print('Scanning stopped');
     }
   }
+  
+  /// Clear system/site state (used when switching to Quick Scan mode)
+  void _clearSystemState() {
+    _currentSiteId = null;
+    _currentSiteName = null;
+    _currentSystemId = null;
+    _currentFrequency = null;
+    _currentChannelIndex = 0;
+    _controlChannels = [];
+    _allSystemSites = [];
+    _hasLock = false;
+    _lastActivityTime = null;
+    notifyListeners();
+  }
+  
+  /// Clear current system selection (for Quick Scan mode)
+  void clearCurrentSystem() {
+    _clearSystemState();
+  }
 
   void _setState(ScanningState newState) {
     _state = newState;
     notifyListeners();
+  }
+  
+  /// Load sites for GPS hopping in background (non-blocking)
+  Future<void> _loadSitesForGpsHopping(int systemId) async {
+    try {
+      _allSystemSites = await _db.getSitesBySystem(systemId);
+      if (kDebugMode) {
+        print('Loaded ${_allSystemSites.length} sites for system $systemId (background)');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error loading sites for GPS hopping: $e');
+      }
+    }
   }
 
   void enableGpsHopping(bool enabled) {
@@ -661,43 +746,28 @@ class ScanningService extends ChangeNotifier {
     if (_allSystemSites.isEmpty || _currentSiteId == null) return;
     
     try {
-      // Find nearest site
-      Map<String, dynamic>? nearestSite;
-      double nearestDistance = double.infinity;
-      
-      for (final site in _allSystemSites) {
-        final lat = site['latitude'] as double?;
-        final lon = site['longitude'] as double?;
-        
-        if (lat != null && lon != null) {
-          final distance = Geolocator.distanceBetween(
-            position.latitude,
-            position.longitude,
-            lat,
-            lon,
-          );
-          
-          if (distance < nearestDistance) {
-            nearestDistance = distance;
-            nearestSite = site;
-          }
-        }
-      }
+      // Use compute() to find nearest site off the main thread
+      final result = await compute(
+        _findNearestSite,
+        _NearestSiteParams(
+          _allSystemSites,
+          position.latitude,
+          position.longitude,
+          _currentSiteId,
+        ),
+      );
       
       // Switch to nearest site if different from current and within reasonable range
-      if (nearestSite != null) {
-        final nearestSiteId = nearestSite['site_id'] as int;
-        final nearestSiteName = nearestSite['site_name'] as String;
-        
+      if (result.siteId != null && result.siteName != null) {
         // Only switch if:
         // 1. It's a different site
         // 2. Distance is reasonable (< 100km)
-        if (nearestSiteId != _currentSiteId && nearestDistance < 100000) {
+        if (result.siteId != _currentSiteId && result.distance < 100000) {
           if (kDebugMode) {
-            print('GPS Hopping: Switching from $_currentSiteName to $nearestSiteName (${(nearestDistance / 1000).toStringAsFixed(1)} km away)');
+            print('GPS Hopping: Switching from $_currentSiteName to ${result.siteName} (${(result.distance / 1000).toStringAsFixed(1)} km away)');
           }
           
-          await startScanning(nearestSiteId, nearestSiteName, systemId: _currentSystemId);
+          await startScanning(result.siteId!, result.siteName!, systemId: _currentSystemId);
         }
       }
     } catch (e) {
