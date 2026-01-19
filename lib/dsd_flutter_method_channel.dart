@@ -303,4 +303,11 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
     final result = await methodChannel.invokeMethod<int>('getFilterMode');
     return result ?? 0;
   }
+  
+  @override
+  Future<void> setCustomArgs(String args) async {
+    await methodChannel.invokeMethod('setCustomArgs', {
+      'args': args,
+    });
+  }
 }

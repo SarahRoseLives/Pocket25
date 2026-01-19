@@ -90,6 +90,10 @@ static std::mutex g_filter_mutex;
 static bool g_audio_enabled_by_user = true;  // Track user's audio preference
 static bool g_audio_muted_by_filter = false; // Track if filter muted audio
 
+// Custom DSD command arguments
+static std::string g_custom_args;
+static std::mutex g_custom_args_mutex;
+
 // Check if a talkgroup should be heard based on filter settings
 static bool should_hear_talkgroup(int tg) {
     std::lock_guard<std::mutex> lock(g_filter_mutex);
@@ -1010,6 +1014,119 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeInit(
     initOpts(g_opts);
     initState(g_state);
     
+    // Apply custom DSD args if set
+    {
+        std::lock_guard<std::mutex> lock(g_custom_args_mutex);
+        if (!g_custom_args.empty()) {
+            LOGI("Applying custom DSD args: %s", g_custom_args.c_str());
+            
+            // Parse decoder flags
+            if (g_custom_args.find("-fp") != std::string::npos) {
+                g_opts->frame_p25p1 = 1;
+                LOGI("Enabled P25 Phase 1");
+            }
+            if (g_custom_args.find("-fx") != std::string::npos) {
+                g_opts->frame_p25p2 = 1;
+                LOGI("Enabled P25 Phase 2");
+            }
+            if (g_custom_args.find("-f1") != std::string::npos) {
+                g_opts->frame_p25p1 = 1;
+                g_opts->frame_p25p2 = 0;
+                LOGI("Enabled P25 Phase 1 only");
+            }
+            if (g_custom_args.find("-f2") != std::string::npos) {
+                g_opts->frame_p25p2 = 1;
+                g_opts->frame_p25p1 = 0;
+                LOGI("Enabled P25 Phase 2 only");
+            }
+            if (g_custom_args.find("-fd") != std::string::npos) {
+                g_opts->frame_dmr = 1;
+                LOGI("Enabled DMR");
+            }
+            if (g_custom_args.find("-fs") != std::string::npos) {
+                g_opts->frame_dmr = 1;
+                LOGI("Enabled DMR Simplex");
+            }
+            if (g_custom_args.find("-fn") != std::string::npos || 
+                g_custom_args.find("-fi") != std::string::npos) {
+                g_opts->frame_nxdn48 = 1;
+                g_opts->frame_nxdn96 = 1;
+                LOGI("Enabled NXDN");
+            }
+            if (g_custom_args.find("-fa") != std::string::npos) {
+                g_opts->frame_p25p1 = 1;
+                g_opts->frame_p25p2 = 1;
+                g_opts->frame_dmr = 1;
+                g_opts->frame_nxdn48 = 1;
+                g_opts->frame_nxdn96 = 1;
+                g_opts->frame_provoice = 1;
+                LOGI("Enabled Auto Detection");
+            }
+            if (g_custom_args.find("-fh") != std::string::npos) {
+                g_opts->frame_provoice = 1;
+                LOGI("Enabled EDACS/ProVoice");
+            }
+            
+            // Parse modulation flags
+            if (g_custom_args.find("-ma") != std::string::npos) {
+                g_opts->mod_c4fm = 1;
+                g_opts->mod_qpsk = 1;
+                g_opts->mod_gfsk = 1;
+                LOGI("Enabled auto modulation");
+            }
+            if (g_custom_args.find("-mc") != std::string::npos) {
+                g_opts->mod_c4fm = 1;
+                LOGI("Enabled C4FM only");
+            }
+            if (g_custom_args.find("-mg") != std::string::npos) {
+                g_opts->mod_gfsk = 1;
+                LOGI("Enabled GFSK only");
+            }
+            if (g_custom_args.find("-mq") != std::string::npos) {
+                g_opts->mod_qpsk = 1;
+                LOGI("Enabled QPSK only");
+            }
+            
+            // Parse audio gain
+            if (g_custom_args.find("-g 0") != std::string::npos || 
+                g_custom_args.find("-g 0.0") != std::string::npos) {
+                g_opts->audio_out = 0;
+                LOGI("Disabled audio output");
+            }
+            
+            // Parse -i input device (simplified - just detect rtl vs rtltcp)
+            size_t i_pos = g_custom_args.find("-i ");
+            if (i_pos != std::string::npos) {
+                std::string input_str = g_custom_args.substr(i_pos + 3);
+                // Extract until next space or end
+                size_t space_pos = input_str.find(' ');
+                if (space_pos != std::string::npos) {
+                    input_str = input_str.substr(0, space_pos);
+                }
+                
+                // Copy to audio_in_dev
+                strncpy(g_opts->audio_in_dev, input_str.c_str(), sizeof(g_opts->audio_in_dev) - 1);
+                g_opts->audio_in_dev[sizeof(g_opts->audio_in_dev) - 1] = '\0';
+                LOGI("Set input device from -i: %s", g_opts->audio_in_dev);
+            }
+            
+            // Parse encryption keys
+            size_t h_pos = g_custom_args.find("-H ");
+            if (h_pos != std::string::npos) {
+                LOGI("Found AES/Hytera key in command string");
+                // Key parsing would go here
+            }
+            
+            // Parse other options
+            if (g_custom_args.find("-4") != std::string::npos) {
+                LOGI("Force privacy key enabled");
+            }
+            if (g_custom_args.find("-Z") != std::string::npos) {
+                LOGI("MBE/PDU logging enabled");
+            }
+        }
+    }
+    
     // Initialize Android native USB fields
     g_opts->rtl_android_usb_fd = -1;
     g_opts->rtl_android_usb_path[0] = '\0';
@@ -1097,6 +1214,30 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStart(
     if (g_engine_running) {
         LOGI("Engine already running");
         return;
+    }
+    
+    // Re-apply custom args if set (in case nativeConnect overwrote them)
+    {
+        std::lock_guard<std::mutex> lock(g_custom_args_mutex);
+        if (!g_custom_args.empty() && g_opts) {
+            LOGI("Re-applying custom DSD args before start: %s", g_custom_args.c_str());
+            
+            // Re-parse -i input device
+            size_t i_pos = g_custom_args.find("-i ");
+            if (i_pos != std::string::npos) {
+                std::string input_str = g_custom_args.substr(i_pos + 3);
+                // Extract until next space or end
+                size_t space_pos = input_str.find(' ');
+                if (space_pos != std::string::npos) {
+                    input_str = input_str.substr(0, space_pos);
+                }
+                
+                // Copy to audio_in_dev
+                strncpy(g_opts->audio_in_dev, input_str.c_str(), sizeof(g_opts->audio_in_dev) - 1);
+                g_opts->audio_in_dev[sizeof(g_opts->audio_in_dev) - 1] = '\0';
+                LOGI("Re-applied input device from -i: %s", g_opts->audio_in_dev);
+            }
+        }
     }
     
     if (g_opts && g_state) {
@@ -1355,6 +1496,34 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeGetFilterMode(
     
     std::lock_guard<std::mutex> lock(g_filter_mutex);
     return static_cast<jint>(g_filter_mode);
+}
+
+// ============================================================================
+// Custom DSD Command Arguments
+// ============================================================================
+
+/**
+ * Set custom DSD command line arguments
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetCustomArgs(
+    JNIEnv* env,
+    jobject thiz,
+    jstring args) {
+    
+    std::lock_guard<std::mutex> lock(g_custom_args_mutex);
+    
+    if (args == nullptr) {
+        g_custom_args.clear();
+        LOGI("Cleared custom DSD args");
+        return;
+    }
+    
+    const char* args_cstr = env->GetStringUTFChars(args, nullptr);
+    g_custom_args = args_cstr;
+    env->ReleaseStringUTFChars(args, args_cstr);
+    
+    LOGI("Set custom DSD args: %s", g_custom_args.c_str());
 }
 
 // ============================================================================

@@ -202,4 +202,9 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
   Future<int> getFilterMode() {
     throw UnimplementedError('getFilterMode() has not been implemented.');
   }
+  
+  /// Set custom DSD command line arguments
+  Future<void> setCustomArgs(String args) {
+    throw UnimplementedError('setCustomArgs() has not been implemented.');
+  }
 }

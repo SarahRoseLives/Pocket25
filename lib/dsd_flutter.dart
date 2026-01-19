@@ -249,4 +249,12 @@ class DsdFlutter {
   Future<int> getFilterMode() {
     return DsdFlutterPlatform.instance.getFilterMode();
   }
+  
+  /// Set custom DSD command line arguments
+  /// 
+  /// [args] is a string of DSD-Neo command line arguments (e.g., "-fp -fx -ma")
+  /// Note: This should be called before start() to take effect
+  Future<void> setCustomArgs(String args) {
+    return DsdFlutterPlatform.instance.setCustomArgs(args);
+  }
 }

@@ -343,6 +343,7 @@ class DsdFlutterPlugin :
     private external fun nativeRemoveFilterTalkgroup(talkgroup: Int)
     private external fun nativeClearFilterTalkgroups()
     private external fun nativeGetFilterMode(): Int
+    private external fun nativeSetCustomArgs(args: String)
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
@@ -625,6 +626,11 @@ class DsdFlutterPlugin :
             }
             "getFilterMode" -> {
                 result.success(nativeGetFilterMode())
+            }
+            "setCustomArgs" -> {
+                val args = call.argument<String>("args") ?: ""
+                nativeSetCustomArgs(args)
+                result.success(null)
             }
             else -> {
                 result.notImplemented()

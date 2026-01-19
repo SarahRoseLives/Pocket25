@@ -7,6 +7,7 @@ import 'system_selection_screen.dart';
 import 'import_manage_screen.dart';
 import 'sdr_settings_screen.dart';
 import 'quick_scan_screen.dart';
+import 'advanced_scan_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final SettingsService settings;
@@ -138,6 +139,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   context,
                   MaterialPageRoute(
                     builder: (context) => QuickScanScreen(
+                      settings: widget.settings,
+                      dsdPlugin: widget.dsdPlugin,
+                      scanningService: widget.scanningService,
+                      isRunning: widget.isRunning,
+                      onStart: widget.onStart,
+                      onStop: widget.onStop,
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuTile(
+              context,
+              title: 'Advanced Scan',
+              subtitle: 'Start DSD with custom command arguments',
+              icon: Icons.terminal,
+              iconColor: Colors.purple[300]!,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => AdvancedScanScreen(
                       settings: widget.settings,
                       dsdPlugin: widget.dsdPlugin,
                       scanningService: widget.scanningService,
