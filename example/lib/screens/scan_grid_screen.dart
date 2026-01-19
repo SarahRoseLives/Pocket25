@@ -5,11 +5,13 @@ import '../services/scanning_service.dart';
 class ScanGridScreen extends StatefulWidget {
   final ScanningService scanningService;
   final Function(Set<int>) onMutedTalkgroupsChanged;
+  final Set<int> initialMutedTalkgroups;
 
   const ScanGridScreen({
     super.key,
     required this.scanningService,
     required this.onMutedTalkgroupsChanged,
+    required this.initialMutedTalkgroups,
   });
 
   @override
@@ -33,6 +35,7 @@ class _ScanGridScreenState extends State<ScanGridScreen> {
   void initState() {
     super.initState();
     _pageController = PageController();
+    _mutedTalkgroups = Set<int>.from(widget.initialMutedTalkgroups);
     _loadTalkgroups();
   }
 

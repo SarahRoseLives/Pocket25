@@ -332,6 +332,7 @@ class _MainScreenState extends State<MainScreen> {
       case 2:
         return ScanGridScreen(
           scanningService: _scanningService,
+          initialMutedTalkgroups: _mutedTalkgroups,
           onMutedTalkgroupsChanged: (mutedTalkgroups) {
             // Update our local muted set and sync to native
             _mutedTalkgroups.clear();
