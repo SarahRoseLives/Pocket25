@@ -140,6 +140,72 @@ static unsigned long long g_last_siteid = 0;
 static unsigned long long g_last_rfssid = 0;
 static int g_last_nac = 0;
 
+// Helper function to sanitize string for UTF-8 conversion
+// Replaces invalid UTF-8 bytes with '?' to prevent JNI crashes
+static std::string sanitize_for_utf8(const char* text) {
+    if (!text) return "";
+    
+    std::string result;
+    result.reserve(strlen(text));
+    
+    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(text);
+    size_t len = strlen(text);
+    
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = bytes[i];
+        
+        // ASCII range (0x00-0x7F) - always valid
+        if (c < 0x80) {
+            result += c;
+        }
+        // Start of 2-byte sequence (0xC0-0xDF)
+        else if (c >= 0xC0 && c <= 0xDF && i + 1 < len) {
+            unsigned char c2 = bytes[i + 1];
+            if ((c2 & 0xC0) == 0x80) {
+                result += c;
+                result += c2;
+                i += 1;
+            } else {
+                result += '?';  // Invalid continuation byte
+            }
+        }
+        // Start of 3-byte sequence (0xE0-0xEF)
+        else if (c >= 0xE0 && c <= 0xEF && i + 2 < len) {
+            unsigned char c2 = bytes[i + 1];
+            unsigned char c3 = bytes[i + 2];
+            if ((c2 & 0xC0) == 0x80 && (c3 & 0xC0) == 0x80) {
+                result += c;
+                result += c2;
+                result += c3;
+                i += 2;
+            } else {
+                result += '?';  // Invalid continuation bytes
+            }
+        }
+        // Start of 4-byte sequence (0xF0-0xF7)
+        else if (c >= 0xF0 && c <= 0xF7 && i + 3 < len) {
+            unsigned char c2 = bytes[i + 1];
+            unsigned char c3 = bytes[i + 2];
+            unsigned char c4 = bytes[i + 3];
+            if ((c2 & 0xC0) == 0x80 && (c3 & 0xC0) == 0x80 && (c4 & 0xC0) == 0x80) {
+                result += c;
+                result += c2;
+                result += c3;
+                result += c4;
+                i += 3;
+            } else {
+                result += '?';  // Invalid continuation bytes
+            }
+        }
+        // Invalid UTF-8 byte - replace with '?'
+        else {
+            result += '?';
+        }
+    }
+    
+    return result;
+}
+
 // Send output text to Flutter via JNI callback
 static void send_to_flutter(const char* text) {
     if (!g_jvm || !g_plugin_class || !g_send_output_method) return;
@@ -158,7 +224,9 @@ static void send_to_flutter(const char* text) {
         return;
     }
     
-    jstring jtext = env->NewStringUTF(text);
+    // Sanitize the input string to ensure valid UTF-8
+    std::string sanitized = sanitize_for_utf8(text);
+    jstring jtext = env->NewStringUTF(sanitized.c_str());
     if (jtext) {
         env->CallStaticVoidMethod(g_plugin_class, g_send_output_method, jtext);
         env->DeleteLocalRef(jtext);
