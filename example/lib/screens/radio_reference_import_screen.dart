@@ -14,6 +14,8 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _zipcodeController = TextEditingController();
+  final _scrollController = ScrollController();
+  final _trunkedSystemsKey = GlobalKey();
   
   String? _countyId;
   String? _countyName;
@@ -44,6 +46,7 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
     _usernameController.dispose();
     _passwordController.dispose();
     _zipcodeController.dispose();
+    _scrollController.dispose();
     _service.dispose();
     super.dispose();
   }
@@ -238,6 +241,20 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
         setState(() {
           _trunkedSystems = systems;
         });
+        
+        // Scroll to bottom to show trunked systems
+        if (systems.isNotEmpty && mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _scrollController.hasClients) {
+              // Scroll to the maximum scroll extent (bottom)
+              _scrollController.animateTo(
+                _scrollController.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 600),
+                curve: Curves.easeInOut,
+              );
+            }
+          });
+        }
       }
     }
   }
@@ -369,6 +386,7 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
 
   Widget _buildImportForm() {
     return ListView(
+      controller: _scrollController,
       padding: const EdgeInsets.all(12),
       children: [
         Card(
@@ -614,6 +632,7 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
         if (_trunkedSystems != null && _trunkedSystems!.isNotEmpty) ...[
           const SizedBox(height: 12),
           Card(
+            key: _trunkedSystemsKey,
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
