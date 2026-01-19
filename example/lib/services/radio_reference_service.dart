@@ -444,10 +444,9 @@ $authXml
     Map<String, dynamic>? closestCounty;
     double closestDistance = double.infinity;
     
-    // Sample some counties to find closest (checking all would be too slow)
-    final sampleSize = counties.length > 10 ? 10 : counties.length;
-    for (int i = 0; i < sampleSize; i++) {
-      final county = counties[i];
+    // Check ALL counties to find the closest match
+    // This is more accurate but slower - consider it the cost of accuracy
+    for (final county in counties) {
       final ctid = county['ctid']?.toString();
       if (ctid == null) continue;
       
@@ -459,6 +458,10 @@ $authXml
       
       if (countyLat != null && countyLon != null) {
         final distance = _calculateDistance(lat, lon, countyLat, countyLon);
+        
+        if (kDebugMode) {
+          print('County ${countyInfo['countyName']}: ${distance.toStringAsFixed(2)} km away');
+        }
         
         if (distance < closestDistance) {
           closestDistance = distance;
