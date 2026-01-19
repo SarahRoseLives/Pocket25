@@ -125,7 +125,6 @@ class _ScanGridScreenState extends State<ScanGridScreen> {
   void _onCategoryChanged(String? category) {
     setState(() {
       _selectedCategory = category;
-      _isLoading = true;
     });
     _loadTalkgroups();
   }
