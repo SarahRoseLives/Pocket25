@@ -185,8 +185,12 @@ class _PatchesTabState extends State<_PatchesTab> {
       if (mounted) {
         setState(() {
           for (var tg in talkgroups) {
-            if (tg['alpha_tag'] != null) {
-              _talkgroupNames[tg['dec'] as int] = tg['alpha_tag'] as String;
+            final tgDecimal = tg['tg_decimal'] as int?;
+            final tgName = tg['tg_name'] as String?;
+            final tgTag = tg['tg_tag'] as String?;
+            
+            if (tgDecimal != null && (tgName != null || tgTag != null)) {
+              _talkgroupNames[tgDecimal] = tgTag ?? tgName!;
             }
           }
         });
@@ -361,21 +365,65 @@ class _PatchesTabState extends State<_PatchesTab> {
 // Group Attachments Tab
 // ============================================================================
 
-class _GroupAttachmentsTab extends StatelessWidget {
+class _GroupAttachmentsTab extends StatefulWidget {
   final ScanningService? scanningService;
   
   const _GroupAttachmentsTab({this.scanningService});
 
   @override
+  State<_GroupAttachmentsTab> createState() => _GroupAttachmentsTabState();
+}
+
+class _GroupAttachmentsTabState extends State<_GroupAttachmentsTab> {
+  final DatabaseService _db = DatabaseService();
+  final Map<int, String> _talkgroupNames = {};
+  bool _isLoadingNames = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAllTalkgroupNames();
+  }
+
+  Future<void> _loadAllTalkgroupNames() async {
+    if (_isLoadingNames) return;
+    _isLoadingNames = true;
+    
+    try {
+      final systemId = widget.scanningService?.currentSystemId;
+      if (systemId == null) return;
+      
+      final talkgroups = await _db.getTalkgroups(systemId);
+      if (mounted) {
+        setState(() {
+          for (var tg in talkgroups) {
+            final tgDecimal = tg['tg_decimal'] as int?;
+            final tgName = tg['tg_name'] as String?;
+            final tgTag = tg['tg_tag'] as String?;
+            
+            if (tgDecimal != null && (tgName != null || tgTag != null)) {
+              _talkgroupNames[tgDecimal] = tgTag ?? tgName!;
+            }
+          }
+        });
+      }
+    } catch (e) {
+      // Ignore errors
+    } finally {
+      _isLoadingNames = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (scanningService == null) {
+    if (widget.scanningService == null) {
       return const Center(child: CircularProgressIndicator());
     }
     
     return AnimatedBuilder(
-      animation: scanningService!,
+      animation: widget.scanningService!,
       builder: (context, _) {
-        final attachments = scanningService!.groupAttachments;
+        final attachments = widget.scanningService!.groupAttachments;
         
         if (attachments.isEmpty) {
           return const Center(
@@ -417,17 +465,33 @@ class _GroupAttachmentsTab extends StatelessWidget {
   }
 
   Widget _buildTalkgroupCard(int tg, List<Map<String, dynamic>> attachments) {
+    final name = _talkgroupNames[tg];
+    
     return Card(
       color: Colors.grey[850],
       margin: const EdgeInsets.only(bottom: 16),
       child: ExpansionTile(
-        title: Text(
-          'Talkgroup $tg',
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-          ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Talkgroup $tg',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+            if (name != null)
+              Text(
+                name,
+                style: TextStyle(
+                  color: Colors.cyan[300],
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+          ],
         ),
         subtitle: Text(
           '${attachments.length} radio${attachments.length != 1 ? "s" : ""} attached',
