@@ -4,13 +4,19 @@ import 'dart:developer' as developer;
 import 'dart:io';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'database_service.dart';
+import 'scanning_service.dart';
 
 class WebProgrammerService {
   HttpServer? _server;
   bool _isRunning = false;
   static const int _port = 8080;
   final DatabaseService _dbService = DatabaseService();
+  final ScanningService? _scanningService;
+
+  WebProgrammerService({ScanningService? scanningService}) 
+      : _scanningService = scanningService;
 
   bool get isRunning => _isRunning;
   int get port => _port;
@@ -73,6 +79,22 @@ class WebProgrammerService {
         _getCreatePage(),
         headers: {'Content-Type': 'text/html'},
       );
+    }
+
+    if (request.method == 'GET' && path == 'locked-sites') {
+      return Response.ok(
+        _getLockedSitesPage(),
+        headers: {'Content-Type': 'text/html'},
+      );
+    }
+
+    // Locked Sites API
+    if (request.method == 'GET' && path == 'api/locked-sites') {
+      return await _getLockedSitesHandler();
+    }
+
+    if (request.method == 'POST' && path == 'api/locked-sites/toggle') {
+      return await _toggleSiteLockHandler(request);
     }
 
     // Systems API
@@ -797,7 +819,10 @@ class WebProgrammerService {
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <h2 style="margin: 0;">Configured Systems</h2>
-                <button onclick="window.location.href='/create'">+ Create New System</button>
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="window.location.href='/locked-sites'">🔒 Locked Sites</button>
+                    <button onclick="window.location.href='/create'">+ Create New System</button>
+                </div>
             </div>
             <div id="systemsList">
                 <p style="color: #808080; font-style: italic;">Loading systems...</p>
@@ -1407,6 +1432,410 @@ class WebProgrammerService {
         }
         
         loadSystem();
+    </script>
+</body>
+</html>
+''';
+  }
+
+  // Locked Sites Handlers
+  Future<Response> _getLockedSitesHandler() async {
+    try {
+      final systems = await _dbService.getSystems();
+      final lockedSites = <Map<String, dynamic>>[];
+      
+      // Load locked sites directly from SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      final lockedKeys = prefs.getStringList('locked_sites') ?? [];
+      final lockedSet = lockedKeys.toSet();
+      
+      developer.log('Locked site keys from prefs: $lockedKeys');
+
+      for (final system in systems) {
+        final sites = await _dbService.getSitesBySystem(system['system_id'] as int);
+        for (final site in sites) {
+          final systemId = system['system_id'] as int;
+          final siteId = site['site_id'] as int;
+          final siteKey = '${systemId}_$siteId';
+          
+          if (lockedSet.contains(siteKey)) {
+            lockedSites.add({
+              'system_id': systemId,
+              'system_name': system['system_name'],
+              'site_id': siteId,
+              'site_name': site['site_name'],
+            });
+          }
+        }
+      }
+
+      return Response.ok(
+        jsonEncode({'locked_sites': lockedSites}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e) {
+      developer.log('Error getting locked sites: $e');
+      return Response.ok(
+        jsonEncode({'locked_sites': [], 'warning': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  Future<Response> _toggleSiteLockHandler(Request request) async {
+    try {
+      final body = jsonDecode(await request.readAsString());
+      final systemId = body['system_id'] as int?;
+      final siteId = body['site_id'] as int?;
+
+      if (systemId == null || siteId == null) {
+        return Response.ok(
+          jsonEncode({'error': 'system_id and site_id required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Load from SharedPreferences, toggle, and save back
+      final prefs = await SharedPreferences.getInstance();
+      final lockedKeys = prefs.getStringList('locked_sites') ?? [];
+      final lockedSet = lockedKeys.toSet();
+      final siteKey = '${systemId}_$siteId';
+      
+      if (lockedSet.contains(siteKey)) {
+        lockedSet.remove(siteKey);
+        developer.log('Web unlocked site: $siteKey');
+      } else {
+        lockedSet.add(siteKey);
+        developer.log('Web locked site: $siteKey');
+      }
+      
+      await prefs.setStringList('locked_sites', lockedSet.toList());
+      
+      // Also update scanning service if available
+      if (_scanningService != null) {
+        await _scanningService!.loadLockedSites(); // Reload from prefs
+      }
+
+      return Response.ok(
+        jsonEncode({'success': true}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e) {
+      developer.log('Error toggling site lock: $e');
+      return Response.ok(
+        jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  String _getLockedSitesPage() {
+    return r'''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Locked Sites - Pocket25</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            padding: 40px 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            color: #a0a0a0;
+            font-size: 1.1em;
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        h2 {
+            margin-bottom: 20px;
+            color: #667eea;
+        }
+        
+        button {
+            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button.small {
+            padding: 8px 15px;
+            font-size: 0.85em;
+        }
+        
+        button.danger {
+            background: linear-gradient(45deg, #e53935 0%, #d32f2f 100%);
+        }
+        
+        button.success {
+            background: linear-gradient(45deg, #43a047 0%, #388e3c 100%);
+        }
+        
+        .nav-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .info-box {
+            background: rgba(33, 150, 243, 0.2);
+            border: 1px solid rgba(33, 150, 243, 0.5);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            color: #64b5f6;
+        }
+        
+        .site-grid {
+            display: grid;
+            gap: 15px;
+        }
+        
+        .site-item {
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .site-item.locked {
+            border-left: 4px solid #e53935;
+        }
+        
+        .site-item.unlocked {
+            border-left: 4px solid #43a047;
+        }
+        
+        .site-info h3 {
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        
+        .site-item.locked .site-info h3 {
+            color: #e57373;
+        }
+        
+        .site-details {
+            color: #b0b0b0;
+            font-size: 0.9em;
+        }
+        
+        .empty-message {
+            text-align: center;
+            color: #808080;
+            padding: 40px;
+            font-style: italic;
+        }
+        
+        .section-divider {
+            margin: 30px 0 20px 0;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔒 Locked Sites</h1>
+            <p class="subtitle">Manage which sites GPS hopping will skip</p>
+            <div class="nav-buttons">
+                <button onclick="window.location.href='/'">🏠 Home</button>
+                <button onclick="window.location.href='/manage'">⚙️ Manage Systems</button>
+                <button onclick="window.location.href='/create'">➕ Create System</button>
+                <button onclick="location.reload()">🔄 Refresh</button>
+            </div>
+        </header>
+        
+        <div class="card">
+            <div class="info-box">
+                <strong>About Site Locking:</strong> When GPS hopping is enabled, locked sites will be skipped during automatic site switching. You can still manually tune to locked sites, but the scanner won't auto-switch to them based on GPS location.
+            </div>
+            
+            <div id="lockedSection">
+                <h2>🔒 Locked Sites</h2>
+                <div id="lockedSitesGrid" class="site-grid">
+                    <p class="empty-message">Loading...</p>
+                </div>
+            </div>
+            
+            <div class="section-divider">
+                <h2>🔓 Unlocked Sites</h2>
+                <div id="unlockedSitesGrid" class="site-grid">
+                    <p class="empty-message">Loading...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allSites = [];
+        let lockedSiteKeys = new Set();
+
+        async function loadSites() {
+            try {
+                const systemsResp = await fetch('/api/systems');
+                if (!systemsResp.ok) throw new Error('Failed to load systems');
+                const systemsData = await systemsResp.json();
+                const systems = Array.isArray(systemsData) ? systemsData : (systemsData.systems || []);
+                
+                const lockedResp = await fetch('/api/locked-sites');
+                if (!lockedResp.ok) throw new Error('Failed to load locked sites');
+                const lockedData = await lockedResp.json();
+                
+                if (lockedData.error) throw new Error(lockedData.error);
+                
+                lockedSiteKeys.clear();
+                if (lockedData && lockedData.locked_sites) {
+                    lockedData.locked_sites.forEach(site => {
+                        lockedSiteKeys.add(`${site.system_id}_${site.site_id}`);
+                    });
+                }
+
+                allSites = [];
+                for (const system of systems) {
+                    const sites = system.sites || [];
+                    sites.forEach(site => {
+                        allSites.push({
+                            system_id: system.system_id,
+                            system_name: system.system_name,
+                            site_id: site.site_id,
+                            site_name: site.site_name
+                        });
+                    });
+                }
+
+                renderSites();
+            } catch (error) {
+                console.error('Error loading sites:', error);
+                document.getElementById('lockedSitesGrid').innerHTML = 
+                    `<p class="empty-message" style="color: #e57373;">Error: ${error.message}</p>`;
+                document.getElementById('unlockedSitesGrid').innerHTML = '';
+            }
+        }
+
+        function renderSites() {
+            const lockedGrid = document.getElementById('lockedSitesGrid');
+            const unlockedGrid = document.getElementById('unlockedSitesGrid');
+            
+            const lockedSites = allSites.filter(s => lockedSiteKeys.has(`${s.system_id}_${s.site_id}`));
+            const unlockedSites = allSites.filter(s => !lockedSiteKeys.has(`${s.system_id}_${s.site_id}`));
+            
+            if (lockedSites.length === 0) {
+                lockedGrid.innerHTML = '<p class="empty-message">No locked sites</p>';
+            } else {
+                lockedGrid.innerHTML = lockedSites.map(site => renderSiteCard(site, true)).join('');
+            }
+            
+            if (unlockedSites.length === 0) {
+                unlockedGrid.innerHTML = '<p class="empty-message">No unlocked sites</p>';
+            } else {
+                unlockedGrid.innerHTML = unlockedSites.map(site => renderSiteCard(site, false)).join('');
+            }
+        }
+        
+        function renderSiteCard(site, isLocked) {
+            return `
+                <div class="site-item ${isLocked ? 'locked' : 'unlocked'}">
+                    <div class="site-info">
+                        <h3>${isLocked ? '🔒' : '🔓'} ${site.site_name}</h3>
+                        <div class="site-details">
+                            System: ${site.system_name} • Site ID: ${site.site_id}
+                        </div>
+                    </div>
+                    <button class="small ${isLocked ? 'success' : 'danger'}" 
+                            onclick="toggleSiteLock(${site.system_id}, ${site.site_id})">
+                        ${isLocked ? '🔓 Unlock' : '🔒 Lock'}
+                    </button>
+                </div>
+            `;
+        }
+
+        async function toggleSiteLock(systemId, siteId) {
+            try {
+                const response = await fetch('/api/locked-sites/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ system_id: systemId, site_id: siteId })
+                });
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+                
+                if (data.success) {
+                    await loadSites();
+                } else {
+                    alert('Failed to toggle site lock');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        loadSites();
     </script>
 </body>
 </html>

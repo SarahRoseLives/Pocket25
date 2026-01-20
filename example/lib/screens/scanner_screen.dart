@@ -46,9 +46,10 @@ class ScannerScreen extends StatelessWidget {
       return Container(
         color: Colors.grey[900],
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             // Status header
             Row(
               children: [
@@ -87,11 +88,16 @@ class ScannerScreen extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: _buildInfoRow(
-                      'Site',
-                      scanningService.currentSiteName!,
-                      Icons.cell_tower,
-                      Colors.cyan,
+                    child: Builder(
+                      builder: (context) => GestureDetector(
+                        onLongPress: () => _showSiteLockDialog(context),
+                        child: _buildInfoRow(
+                          'Site',
+                          scanningService.currentSiteName!,
+                          scanningService.isCurrentSiteLocked ? Icons.lock : Icons.cell_tower,
+                          scanningService.isCurrentSiteLocked ? Colors.orange : Colors.cyan,
+                        ),
+                      ),
                     ),
                   ),
                   if (scanningService.tsbkCount > 0) ...[
@@ -156,6 +162,7 @@ class ScannerScreen extends StatelessWidget {
             ],
           ],
         ),
+      ),
       );
     }
 
@@ -533,6 +540,45 @@ class ScannerScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+  
+  void _showSiteLockDialog(BuildContext context) {
+    if (scanningService.currentSystemId == null || scanningService.currentSiteId == null) return;
+    
+    final isLocked = scanningService.isCurrentSiteLocked;
+    final gpsHoppingEnabled = scanningService.gpsHoppingEnabled;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(isLocked ? 'Unlock Site?' : 'Lock Site?'),
+        content: SingleChildScrollView(
+          child: Text(
+            isLocked
+              ? 'GPS site hopping will be able to switch to "${scanningService.currentSiteName}".'
+              : gpsHoppingEnabled
+                ? 'GPS site hopping will skip "${scanningService.currentSiteName}".\n\nThe scanner will immediately switch to the next nearest unlocked site.'
+                : 'GPS site hopping will skip "${scanningService.currentSiteName}".\n\nYou can still manually tune to this site, but GPS won\'t auto-switch to it.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              scanningService.toggleSiteLock(
+                scanningService.currentSystemId!,
+                scanningService.currentSiteId!,
+              );
+              Navigator.pop(context);
+            },
+            child: Text(isLocked ? 'Unlock' : 'Lock'),
+          ),
+        ],
+      ),
     );
   }
 }

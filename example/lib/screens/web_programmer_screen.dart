@@ -2,16 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import '../services/web_programmer_service.dart';
+import '../services/scanning_service.dart';
 
 class WebProgrammerScreen extends StatefulWidget {
-  const WebProgrammerScreen({super.key});
+  final ScanningService? scanningService;
+  
+  const WebProgrammerScreen({super.key, this.scanningService});
 
   @override
   State<WebProgrammerScreen> createState() => _WebProgrammerScreenState();
 }
 
 class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
-  final WebProgrammerService _webService = WebProgrammerService();
+  WebProgrammerService? _webService;
   final NetworkInfo _networkInfo = NetworkInfo();
   String? _ipAddress;
   bool _isLoading = false;
@@ -20,6 +23,7 @@ class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
   @override
   void initState() {
     super.initState();
+    _webService = WebProgrammerService(scanningService: widget.scanningService);
     _loadIpAddress();
   }
 
@@ -43,10 +47,10 @@ class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
     });
 
     try {
-      if (_webService.isRunning) {
-        await _webService.stopServer();
+      if (_webService!.isRunning) {
+        await _webService!.stopServer();
       } else {
-        await _webService.startServer();
+        await _webService!.startServer();
         // Reload IP address in case it changed
         await _loadIpAddress();
       }
@@ -59,7 +63,7 @@ class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              _webService.isRunning
+              _webService!.isRunning
                   ? 'Web Programmer started'
                   : 'Web Programmer stopped',
             ),
@@ -87,14 +91,20 @@ class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
 
   @override
   void dispose() {
-    _webService.stopServer();
+    _webService?.stopServer();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final serverUrl = _ipAddress != null && _webService.isRunning
-        ? 'http://$_ipAddress:${_webService.port}'
+    if (_webService == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    
+    final serverUrl = _ipAddress != null && _webService!.isRunning
+        ? 'http://$_ipAddress:${_webService!.port}'
         : null;
 
     return Scaffold(
@@ -159,10 +169,10 @@ class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
                         Row(
                           children: [
                             Icon(
-                              _webService.isRunning
+                              _webService!.isRunning
                                   ? Icons.check_circle
                                   : Icons.cloud_off,
-                              color: _webService.isRunning
+                              color: _webService!.isRunning
                                   ? Colors.green[300]
                                   : Colors.grey[500],
                               size: 24,
@@ -178,7 +188,7 @@ class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
                           ],
                         ),
                         Switch(
-                          value: _webService.isRunning,
+                          value: _webService!.isRunning,
                           onChanged: _isLoading ? null : (_) => _toggleServer(),
                           activeTrackColor: Colors.green[400],
                         ),
@@ -213,7 +223,7 @@ class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
                           ],
                         ),
                       ),
-                    if (_webService.isRunning && serverUrl != null) ...[
+                    if (_webService!.isRunning && serverUrl != null) ...[
                       const Divider(height: 24),
                       const Text(
                         'Connection Information',
@@ -231,7 +241,7 @@ class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
                       const SizedBox(height: 8),
                       _buildInfoRow(
                         'Port',
-                        '${_webService.port}',
+                        '${_webService!.port}',
                         Icons.settings_ethernet,
                       ),
                       const SizedBox(height: 12),
@@ -305,7 +315,7 @@ class _WebProgrammerScreenState extends State<WebProgrammerScreen> {
                           ],
                         ),
                       ),
-                    ] else if (!_webService.isRunning && !_isLoading) ...[
+                    ] else if (!_webService!.isRunning && !_isLoading) ...[
                       const SizedBox(height: 12),
                       Text(
                         'Enable the web server to get connection information.',

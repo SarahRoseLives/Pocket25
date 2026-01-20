@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/settings_service.dart';
 import '../services/native_rtlsdr_service.dart';
 import 'database_service.dart';
@@ -13,8 +14,9 @@ class _NearestSiteParams {
   final double lat;
   final double lon;
   final int? currentSiteId;
+  final Set<String> lockedSiteKeys; // Add locked sites filter
   
-  _NearestSiteParams(this.sites, this.lat, this.lon, this.currentSiteId);
+  _NearestSiteParams(this.sites, this.lat, this.lon, this.currentSiteId, this.lockedSiteKeys);
 }
 
 /// Result from nearest site computation
@@ -46,6 +48,16 @@ _NearestSiteResult _findNearestSite(_NearestSiteParams params) {
   for (final site in params.sites) {
     final lat = site['latitude'] as double?;
     final lon = site['longitude'] as double?;
+    final siteId = site['site_id'] as int?;
+    final systemId = site['system_id'] as int?;
+    
+    // Skip locked sites
+    if (systemId != null && siteId != null) {
+      final siteKey = '${systemId}_$siteId';
+      if (params.lockedSiteKeys.contains(siteKey)) {
+        continue; // Skip this site
+      }
+    }
     
     if (lat != null && lon != null) {
       final distance = _haversineDistance(params.lat, params.lon, lat, lon);
@@ -121,6 +133,9 @@ class ScanningService extends ChangeNotifier {
   
   // HackRF state
   bool _hackrfStreaming = false;
+  
+  // Locked sites for GPS hopping
+  Set<String> _lockedSiteKeys = {}; // Format: "systemId_siteId"
   
   ScanningState get state => _state;
   int? get currentSiteId => _currentSiteId;
@@ -754,6 +769,7 @@ class ScanningService extends ChangeNotifier {
           position.latitude,
           position.longitude,
           _currentSiteId,
+          _lockedSiteKeys, // Pass locked sites to isolate
         ),
       );
       
@@ -775,6 +791,68 @@ class ScanningService extends ChangeNotifier {
         print('Error checking nearest site: $e');
       }
     }
+  }
+  
+  // Site lockout methods
+  
+  /// Load locked sites from SharedPreferences
+  Future<void> loadLockedSites() async {
+    final prefs = await SharedPreferences.getInstance();
+    final locked = prefs.getStringList('locked_sites') ?? [];
+    _lockedSiteKeys = locked.toSet();
+    if (kDebugMode) {
+      print('Loaded ${_lockedSiteKeys.length} locked sites');
+    }
+  }
+  
+  /// Save locked sites to SharedPreferences
+  Future<void> _saveLockedSites() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('locked_sites', _lockedSiteKeys.toList());
+  }
+  
+  /// Check if a site is locked
+  bool isSiteLocked(int systemId, int siteId) {
+    return _lockedSiteKeys.contains('${systemId}_$siteId');
+  }
+  
+  /// Check if current site is locked
+  bool get isCurrentSiteLocked {
+    if (_currentSystemId == null || _currentSiteId == null) return false;
+    return isSiteLocked(_currentSystemId!, _currentSiteId!);
+  }
+  
+  /// Toggle lock state of a site
+  Future<void> toggleSiteLock(int systemId, int siteId) async {
+    final key = '${systemId}_$siteId';
+    final wasLocked = _lockedSiteKeys.contains(key);
+    
+    if (wasLocked) {
+      _lockedSiteKeys.remove(key);
+      if (kDebugMode) {
+        print('Unlocked site: $key');
+      }
+    } else {
+      _lockedSiteKeys.add(key);
+      if (kDebugMode) {
+        print('Locked site: $key');
+      }
+      
+      // If we just locked the current site and GPS hopping is enabled,
+      // immediately check for next nearest site
+      if (_gpsHoppingEnabled && 
+          systemId == _currentSystemId && 
+          siteId == _currentSiteId &&
+          _lastPosition != null) {
+        if (kDebugMode) {
+          print('Locked current site - searching for next nearest site...');
+        }
+        // Trigger immediate site check
+        await _checkNearestSite(_lastPosition!);
+      }
+    }
+    await _saveLockedSites();
+    notifyListeners();
   }
 
   @override

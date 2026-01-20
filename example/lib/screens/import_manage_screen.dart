@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'radio_reference_import_screen.dart';
 import 'web_programmer_screen.dart';
+import '../services/scanning_service.dart';
 
 class ImportManageScreen extends StatelessWidget {
-  const ImportManageScreen({super.key});
+  final ScanningService? scanningService;
+  
+  const ImportManageScreen({super.key, this.scanningService});
 
   @override
   Widget build(BuildContext context) {
@@ -43,7 +46,7 @@ class ImportManageScreen extends StatelessWidget {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const WebProgrammerScreen(),
+                    builder: (context) => WebProgrammerScreen(scanningService: scanningService),
                   ),
                 );
               },

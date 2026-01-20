@@ -102,6 +102,9 @@ class _MainScreenState extends State<MainScreen> {
     // Set blacklist mode by default and sync muted TGs to native layer
     await _dsdFlutterPlugin.setFilterMode(2); // Blacklist mode
     await _syncMutedTalkgroupsToNative();
+    
+    // Load locked sites for GPS hopping
+    await _scanningService.loadLockedSites();
   }
   
   Future<void> _syncMutedTalkgroupsToNative() async {
