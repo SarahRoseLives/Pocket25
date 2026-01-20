@@ -46,10 +46,9 @@ class ScannerScreen extends StatelessWidget {
       return Container(
         color: Colors.grey[900],
         padding: const EdgeInsets.all(16),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             // Status header
             Row(
               children: [
@@ -162,7 +161,6 @@ class ScannerScreen extends StatelessWidget {
             ],
           ],
         ),
-      ),
       );
     }
 
