@@ -344,6 +344,7 @@ class DsdFlutterPlugin :
     private external fun nativeClearFilterTalkgroups()
     private external fun nativeGetFilterMode(): Int
     private external fun nativeSetCustomArgs(args: String)
+    private external fun nativeSetRetuneFrozen(frozen: Boolean)
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
@@ -630,6 +631,11 @@ class DsdFlutterPlugin :
             "setCustomArgs" -> {
                 val args = call.argument<String>("args") ?: ""
                 nativeSetCustomArgs(args)
+                result.success(null)
+            }
+            "setRetuneFrozen" -> {
+                val frozen = call.argument<Boolean>("frozen") ?: false
+                nativeSetRetuneFrozen(frozen)
                 result.success(null)
             }
             else -> {

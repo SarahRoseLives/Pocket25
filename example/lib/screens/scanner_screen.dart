@@ -90,11 +90,13 @@ class ScannerScreen extends StatelessWidget {
                     child: Builder(
                       builder: (context) => GestureDetector(
                         onLongPress: () => _showSiteLockDialog(context),
-                        child: _buildInfoRow(
+                        child: _buildInfoRowWithExtraIcon(
                           'Site',
                           scanningService.currentSiteName!,
                           scanningService.isCurrentSiteLocked ? Icons.lock : Icons.cell_tower,
                           scanningService.isCurrentSiteLocked ? Colors.orange : Colors.cyan,
+                          extraIcon: scanningService.gpsHoppingEnabled ? Icons.my_location : null,
+                          extraIconColor: Colors.purple,
                         ),
                       ),
                     ),
@@ -148,16 +150,6 @@ class ScannerScreen extends StatelessWidget {
                 scanningService.hasLock ? Colors.green : Colors.orange,
               ),
               const SizedBox(height: 12),
-            ],
-            
-            // GPS Hopping Status
-            if (isRunning && scanningService.gpsHoppingEnabled) ...[
-              _buildInfoRow(
-                'GPS Site Hopping',
-                'ENABLED',
-                Icons.my_location,
-                Colors.purple,
-              ),
             ],
           ],
         ),
@@ -477,7 +469,7 @@ class ScannerScreen extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.2),
+            color: color.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Icon(
@@ -508,6 +500,65 @@ class ScannerScreen extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                   fontFamily: 'monospace',
                 ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoRowWithExtraIcon(String label, String value, IconData icon, Color color, {IconData? extraIcon, Color? extraIconColor}) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: color,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey[500],
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      value,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                  if (extraIcon != null) ...[
+                    const SizedBox(width: 6),
+                    Icon(
+                      extraIcon,
+                      size: 16,
+                      color: extraIconColor ?? Colors.white,
+                    ),
+                  ],
+                ],
               ),
             ],
           ),

@@ -93,7 +93,7 @@ class ScanningService extends ChangeNotifier {
   final SettingsService _settingsService;
   final DatabaseService _db = DatabaseService();
   final VoidCallback _onStart;
-  final VoidCallback _onStop;
+  final Future<void> Function() _onStop;
   
   ScanningState _state = ScanningState.idle;
   int? _currentSiteId;
@@ -114,6 +114,7 @@ class ScanningService extends ChangeNotifier {
   
   bool _hasLock = false;
   DateTime? _lastActivityTime;
+  DateTime? _rtlTcpReconnectTime; // Track when we reconnected for buffer flush delay
   bool _gpsHoppingEnabled = false;
   Position? _lastPosition;
   
@@ -121,6 +122,9 @@ class ScanningService extends ChangeNotifier {
   int _tsbkCount = 0;
   int _parityMismatches = 0;
   DateTime? _lastTsbkTime;
+  
+  // Retune freeze tracking - unfreeze when new CC locks
+  bool _pendingRetuneUnfreeze = false;
   
   // Network information
   List<int> _neighborFreqs = []; // Neighbor site frequencies in Hz
@@ -235,6 +239,21 @@ class ScanningService extends ChangeNotifier {
       }
       _parityMismatches = tsbkErr;
       
+      // For rtl_tcp: ignore lock for 8 seconds after reconnect to let buffer flush
+      // Buffered samples from old frequency will cause false locks and auto-retune
+      if (_settingsService.rtlSource == RtlSource.remote && _rtlTcpReconnectTime != null) {
+        final timeSinceReconnect = DateTime.now().difference(_rtlTcpReconnectTime!);
+        if (timeSinceReconnect.inSeconds < 8) {
+          if (kDebugMode && hasSync) {
+            print('Ignoring lock during rtl_tcp buffer flush (${timeSinceReconnect.inSeconds}s/${8}s)');
+          }
+          return; // Skip lock processing during flush period
+        } else {
+          // Flush period complete
+          _rtlTcpReconnectTime = null;
+        }
+      }
+      
       // Update lock status based on sync
       if (hasSync) {
         _hasLock = true;
@@ -244,6 +263,15 @@ class ScanningService extends ChangeNotifier {
           _setState(ScanningState.locked);
           if (kDebugMode) {
             print('Control channel LOCKED at $_currentFrequency MHz');
+          }
+          
+          // Unfreeze retunes now that we've locked on new CC
+          if (_pendingRetuneUnfreeze) {
+            _pendingRetuneUnfreeze = false;
+            if (kDebugMode) {
+              print('Unfreezing retunes after CC lock');
+            }
+            _dsdPlugin.setRetuneFrozen(false);
           }
         }
       }
@@ -473,24 +501,39 @@ class ScanningService extends ChangeNotifier {
             throw Exception('Failed to configure native RTL-SDR');
           }
           
+          // Freeze retunes during initial startup to prevent old buffered data issues
+          if (kDebugMode) {
+            print('Freezing retunes during native USB startup');
+          }
+          await _dsdPlugin.setRetuneFrozen(true);
+          
           // Start the engine
           _onStart();
+          
+          // Unfreeze retunes after buffer settles (5 seconds for native USB)
+          Future.delayed(const Duration(seconds: 5), () async {
+            if (kDebugMode) {
+              print('Unfreezing retunes after native USB startup');
+            }
+            await _dsdPlugin.setRetuneFrozen(false);
+          });
         } else {
           // Device already open - need to stop engine, let it clean up USB, then restart with new frequency
           if (kDebugMode) {
             print('Retuning native USB RTL-SDR to ${_settingsService.frequencyHz} Hz');
           }
           
+          // Freeze retunes during system switch
+          if (kDebugMode) {
+            print('Freezing retunes during native USB system switch');
+          }
+          await _dsdPlugin.setRetuneFrozen(true);
+          
           // Clear our tracking of the USB device - engine will close it during stop
           _settingsService.clearNativeUsbDevice();
           
-          // Stop the engine - this will close the USB device internally
-          // Note: _onStop() calls async stop but we can't await it (blocks UI thread)
-          // So we fire it and wait longer to ensure it completes
-          _onStop();
-          
-          // Wait longer for engine to fully stop and release USB (native stop takes 3+ seconds)
-          await Future.delayed(const Duration(milliseconds: 3500));
+          // Stop the engine - must await to ensure USB is released
+          await _onStop();
           
           // Re-open USB device with new frequency
           final devices = await NativeRtlSdrService.listDevices();
@@ -528,6 +571,12 @@ class ScanningService extends ChangeNotifier {
           
           // Start engine with new configuration
           _onStart();
+          
+          // Mark that we need to unfreeze when CC locks
+          _pendingRetuneUnfreeze = true;
+          if (kDebugMode) {
+            print('Waiting for CC lock to unfreeze retunes');
+          }
         }
       } else if (_settingsService.rtlSource == RtlSource.hackrf) {
         // HackRF mode - use direct dsd_flutter HackRF support
@@ -586,17 +635,39 @@ class ScanningService extends ChangeNotifier {
           notifyListeners();
         }
       } else {
-        // Remote rtl_tcp mode - stop/start approach
-        _onStop();
-        await Future.delayed(const Duration(milliseconds: 500));
+        // Remote rtl_tcp mode - reconnect with new frequency
+        // Note: stopScanning() already stopped DSD, so just reconnect and restart
         
+        // IMPORTANT: Freeze retunes during system switch to prevent old buffered
+        // P25 grants from retuning back to old system frequencies
+        if (kDebugMode) {
+          print('Freezing retunes during rtl_tcp system switch');
+        }
+        await _dsdPlugin.setRetuneFrozen(true);
+        
+        if (kDebugMode) {
+          print('Reconnecting rtl_tcp at ${_settingsService.effectiveHost}:${_settingsService.effectivePort} freq ${_settingsService.frequencyHz} Hz');
+        }
+        
+        // Reconnect with new frequency (DSD is already stopped from stopScanning())
         await _dsdPlugin.connect(
           _settingsService.effectiveHost,
           _settingsService.effectivePort,
           _settingsService.frequencyHz,
         );
         
+        if (kDebugMode) {
+          print('Starting DSD with rtl_tcp at ${_settingsService.frequencyHz} Hz (retunes frozen until CC lock)');
+        }
+        
+        // Start DSD - retunes are frozen so old P25 grants won't cause switchback
         _onStart();
+        
+        // Mark that we need to unfreeze when CC locks
+        _pendingRetuneUnfreeze = true;
+        if (kDebugMode) {
+          print('Waiting for CC lock to unfreeze retunes');
+        }
       }
       
       notifyListeners();
@@ -649,6 +720,10 @@ class ScanningService extends ChangeNotifier {
     _lockCheckTimer = null;
     _stopGpsTracking();
     
+    // Ensure retunes are unfrozen when stopping
+    _pendingRetuneUnfreeze = false;
+    await _dsdPlugin.setRetuneFrozen(false);
+    
     // Clear device tracking before stopping - engine will close USB during cleanup
     if (_settingsService.rtlSource == RtlSource.nativeUsb && _settingsService.hasNativeUsbDevice) {
       _settingsService.clearNativeUsbDevice();
@@ -664,13 +739,13 @@ class ScanningService extends ChangeNotifier {
       }
     }
     
-    // Clear state immediately for responsive UI
+    // Stop engine - it will handle closing USB device internally
+    // Must await to ensure DSP is fully stopped before starting new scan
+    await _onStop();
+    
+    // Clear state after DSP stops
     _clearSystemState();
     _setState(ScanningState.idle);
-    
-    // Stop engine - it will handle closing USB device internally
-    // Note: Can't await stop as it blocks UI thread, so fire and forget
-    _onStop();
     
     if (kDebugMode) {
       print('Scanning stopped');
@@ -688,6 +763,7 @@ class ScanningService extends ChangeNotifier {
     _allSystemSites = [];
     _hasLock = false;
     _lastActivityTime = null;
+    _pendingRetuneUnfreeze = false;
     notifyListeners();
   }
   

@@ -22,6 +22,9 @@ extern "C" {
 #include <dsd-neo/core/state.h>
 #include <dsd-neo/engine/engine.h>
 #include <dsd-neo/runtime/exitflag.h>
+// Forward declare to avoid C++ incompatibility with headers
+void p25_sm_init(dsd_opts* opts, dsd_state* state);
+void p25_reset_iden_tables(dsd_state* state);
 }
 
 // Native RTL-SDR USB support (when enabled)
@@ -77,6 +80,7 @@ static int g_last_aff_count = 0;
 
 #include <set>
 #include <mutex>
+#include <atomic>
 
 enum FilterMode {
     FILTER_MODE_DISABLED = 0,  // No filtering - hear all calls
@@ -93,6 +97,9 @@ static bool g_audio_muted_by_filter = false; // Track if filter muted audio
 // Custom DSD command arguments
 static std::string g_custom_args;
 static std::mutex g_custom_args_mutex;
+
+// Retune freeze - temporarily block auto-retunes during system switch
+static std::atomic<bool> g_retune_freeze{false};
 
 // Check if a talkgroup should be heard based on filter settings
 static bool should_hear_talkgroup(int tg) {
@@ -1294,6 +1301,18 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStop(
         g_engine_running = false;  // Signal poll thread to stop
         pthread_join(g_engine_thread, nullptr);
         pthread_join(g_poll_thread, nullptr);
+        LOGI("Engine threads stopped");
+        
+        // Reset P25 state to prevent retune to old system
+        if (g_state) {
+            LOGI("Clearing P25 frequency identifier tables");
+            p25_reset_iden_tables(g_state);
+        }
+        if (g_opts && g_state) {
+            LOGI("Reinitializing P25 trunking state machine");
+            p25_sm_init(g_opts, g_state);
+        }
+        
         LOGI("Engine stopped");
     }
 }
@@ -2050,5 +2069,20 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStopHackRfMode(
     pthread_join(g_hackrf_tcp_server_thread, nullptr);
     
     LOGI("HackRF mode stopped");
+}
+
+// Export retune freeze flag for rtl_sdr_fm to check
+extern "C" bool dsd_flutter_retune_frozen(void) {
+    return g_retune_freeze.load();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetRetuneFrozen(
+    JNIEnv* env,
+    jobject thiz,
+    jboolean frozen) {
+    
+    g_retune_freeze.store(frozen);
+    LOGI("Retune freeze set to: %s", frozen ? "true" : "false");
 }
 

@@ -38,6 +38,8 @@ int dsd_rtl_stream_set_bias_tee(int on);
 void dsd_rtl_stream_p25p2_err_update(int slot, int facch_ok_delta, int facch_err_delta, int sacch_ok_delta,
                                      int sacch_err_delta, int voice_err_delta);
 int dsd_rtl_stream_eye_get(float* out, int max_samples, int* out_sps);
+/* Retune freeze flag from JNI layer */
+bool dsd_flutter_retune_frozen(void);
 int dsd_rtl_stream_constellation_get(float* out_xy, int max_points);
 int dsd_rtl_stream_spectrum_get(float* out_db, int max_bins, int* out_rate);
 int dsd_rtl_stream_spectrum_set_size(int n);
@@ -163,6 +165,11 @@ rtl_stream_destroy(RtlSdrContext* ctx) {
  */
 extern "C" int
 rtl_stream_tune(RtlSdrContext* ctx, uint32_t center_freq_hz) {
+    /* Check if retune is frozen (during system switch to flush old buffer) */
+    if (dsd_flutter_retune_frozen()) {
+        return 0; /* silently ignore retune request during freeze */
+    }
+    
     if (!ctx || !ctx->stream) {
         return -1;
     }

@@ -310,4 +310,11 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
       'args': args,
     });
   }
+  
+  @override
+  Future<void> setRetuneFrozen(bool frozen) async {
+    await methodChannel.invokeMethod('setRetuneFrozen', {
+      'frozen': frozen,
+    });
+  }
 }

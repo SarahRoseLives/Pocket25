@@ -207,4 +207,9 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
   Future<void> setCustomArgs(String args) {
     throw UnimplementedError('setCustomArgs() has not been implemented.');
   }
+  
+  /// Freeze/unfreeze auto-retune during system switching
+  Future<void> setRetuneFrozen(bool frozen) {
+    throw UnimplementedError('setRetuneFrozen() has not been implemented.');
+  }
 }

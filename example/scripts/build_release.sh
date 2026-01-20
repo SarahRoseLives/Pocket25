@@ -10,6 +10,10 @@ echo ""
 ./scripts/bump_version.sh
 
 echo ""
+echo "Cleaning Build Environment"
+flutter clean
+
+echo ""
 echo "Building release APK..."
 flutter build apk --release
 

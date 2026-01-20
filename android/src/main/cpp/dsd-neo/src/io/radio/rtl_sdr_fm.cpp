@@ -68,6 +68,8 @@ unsigned int dsd_rtl_stream_output_rate(void);
 int dsd_rtl_stream_ted_bias(void);
 int dsd_rtl_stream_set_rtltcp_autotune(int onoff);
 int dsd_rtl_stream_get_rtltcp_autotune(void);
+/* Retune freeze flag from JNI layer */
+bool dsd_flutter_retune_frozen(void);
 #ifdef __cplusplus
 }
 #endif
@@ -1699,6 +1701,13 @@ static DSD_THREAD_RETURN_TYPE
         if (s->manual_retune_pending.load()) {
             uint32_t tgt = s->manual_retune_freq;
             s->manual_retune_pending.store(0);
+            
+            /* Check if retune is frozen (during system switch to flush old buffer) */
+            if (dsd_flutter_retune_frozen()) {
+                LOG_NOTICE("Retune blocked in controller: frequency frozen during system switch.\n");
+                continue;
+            }
+            
             /* Gate demod thread: prevent processing transient samples during retune */
             s->retune_in_progress.store(1, std::memory_order_release);
             /* Ask consumer to purge ring safely (keeps SPSC producer/consumer contract). */
@@ -3814,6 +3823,12 @@ rtl_stream_dsp_get(int* cqpsk_enable, int* fll_enable, int* ted_enable) {
  */
 extern "C" int
 dsd_rtl_stream_tune(dsd_opts* opts, long int frequency) {
+    /* Check if retune is frozen (during system switch to flush rtl_tcp buffer) */
+    if (dsd_flutter_retune_frozen()) {
+        LOG_NOTICE("Retune blocked: frequency frozen during system switch.\n");
+        return 0;
+    }
+    
     /* Freeze retunes during auto-PPM training (to allow lock) unless disabled */
     static int freeze_checked = 0;
     static int freeze_on_train = 1; /* default on */

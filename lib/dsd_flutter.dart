@@ -257,4 +257,12 @@ class DsdFlutter {
   Future<void> setCustomArgs(String args) {
     return DsdFlutterPlatform.instance.setCustomArgs(args);
   }
+  
+  /// Freeze/unfreeze auto-retune during system switching
+  /// 
+  /// When frozen, DSD will not retune to voice channels based on P25 grants.
+  /// This prevents old buffered P25 data from causing retunes during system switch.
+  Future<void> setRetuneFrozen(bool frozen) {
+    return DsdFlutterPlatform.instance.setRetuneFrozen(frozen);
+  }
 }

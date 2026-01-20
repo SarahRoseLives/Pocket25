@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum RtlSource {
   nativeUsb, // Native USB RTL-SDR (built-in, no external app needed)
@@ -26,6 +27,47 @@ class SettingsService extends ChangeNotifier {
   int _hackrfBandwidth = 1750000; // Baseband filter bandwidth in Hz
   bool _hackrfAmpEnable = false; // RF amplifier enable
 
+  SettingsService() {
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    final rtlSourceIndex = prefs.getInt('sdr_rtl_source');
+    if (rtlSourceIndex != null && rtlSourceIndex < RtlSource.values.length) {
+      _rtlSource = RtlSource.values[rtlSourceIndex];
+    }
+    
+    _remoteHost = prefs.getString('sdr_remote_host') ?? _remoteHost;
+    _remotePort = prefs.getInt('sdr_remote_port') ?? _remotePort;
+    _gain = prefs.getInt('sdr_gain') ?? _gain;
+    _ppm = prefs.getInt('sdr_ppm') ?? _ppm;
+    _hackrfLnaGain = prefs.getInt('sdr_hackrf_lna_gain') ?? _hackrfLnaGain;
+    _hackrfVgaGain = prefs.getInt('sdr_hackrf_vga_gain') ?? _hackrfVgaGain;
+    
+    notifyListeners();
+    
+    if (kDebugMode) {
+      print('Loaded SDR settings from storage');
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('sdr_rtl_source', _rtlSource.index);
+    await prefs.setString('sdr_remote_host', _remoteHost);
+    await prefs.setInt('sdr_remote_port', _remotePort);
+    await prefs.setInt('sdr_gain', _gain);
+    await prefs.setInt('sdr_ppm', _ppm);
+    await prefs.setInt('sdr_hackrf_lna_gain', _hackrfLnaGain);
+    await prefs.setInt('sdr_hackrf_vga_gain', _hackrfVgaGain);
+    
+    if (kDebugMode) {
+      print('Saved SDR settings to storage');
+    }
+  }
+
   RtlSource get rtlSource => _rtlSource;
   String get remoteHost => _remoteHost;
   int get remotePort => _remotePort;
@@ -52,16 +94,19 @@ class SettingsService extends ChangeNotifier {
 
   void setRtlSource(RtlSource value) {
     _rtlSource = value;
+    _saveSettings();
     notifyListeners();
   }
 
   void updateRemoteHost(String value) {
     _remoteHost = value;
+    _saveSettings();
     notifyListeners();
   }
 
   void updateRemotePort(int value) {
     _remotePort = value;
+    _saveSettings();
     notifyListeners();
   }
 
@@ -77,11 +122,13 @@ class SettingsService extends ChangeNotifier {
 
   void updateGain(int value) {
     _gain = value;
+    _saveSettings();
     notifyListeners();
   }
 
   void updatePpm(int value) {
     _ppm = value;
+    _saveSettings();
     notifyListeners();
   }
 
@@ -105,11 +152,13 @@ class SettingsService extends ChangeNotifier {
   // HackRF setters
   void updateHackrfLnaGain(int value) {
     _hackrfLnaGain = value;
+    _saveSettings();
     notifyListeners();
   }
   
   void updateHackrfVgaGain(int value) {
     _hackrfVgaGain = value;
+    _saveSettings();
     notifyListeners();
   }
   
