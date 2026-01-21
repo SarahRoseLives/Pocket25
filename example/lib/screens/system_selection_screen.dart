@@ -175,15 +175,20 @@ class _SystemSelectionScreenState extends State<SystemSelectionScreen> {
               style: const TextStyle(fontSize: 12),
             ),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.push(
+            onTap: () async {
+              await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => SiteSelectionScreen(
                     systemId: system.systemId,
                     systemName: system.systemName,
                     sites: system.sites,
-                    onSiteSelected: widget.onSystemSelected,
+                    onSiteSelected: (siteId, siteName) {
+                      // Call the parent callback
+                      widget.onSystemSelected(siteId, siteName);
+                      // Pop this screen (SystemSelectionScreen) after site is selected
+                      Navigator.of(context).pop();
+                    },
                     scanningService: widget.scanningService,
                   ),
                 ),

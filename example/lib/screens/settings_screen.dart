@@ -17,6 +17,7 @@ class SettingsScreen extends StatefulWidget {
   final VoidCallback onStart;
   final VoidCallback onStop;
   final Function(String) onStatusUpdate;
+  final VoidCallback? onNavigateToScanner;
 
   const SettingsScreen({
     super.key,
@@ -27,6 +28,7 @@ class SettingsScreen extends StatefulWidget {
     required this.onStart,
     required this.onStop,
     required this.onStatusUpdate,
+    this.onNavigateToScanner,
   });
 
   @override
@@ -67,8 +69,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: 'View and manage systems, select site to scan',
               icon: Icons.cell_tower,
               iconColor: Colors.cyan[300]!,
-              onTap: () {
-                Navigator.push(
+              onTap: () async {
+                await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => SystemSelectionScreen(
@@ -77,6 +79,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         Future.microtask(() async {
                           await widget.scanningService.startScanning(siteId, siteName);
                         });
+                        
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -90,6 +93,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 );
+                
+                // After returning from system selection, switch to scanner tab
+                if (context.mounted) {
+                  widget.onNavigateToScanner?.call();
+                }
               },
             ),
             const SizedBox(height: 12),

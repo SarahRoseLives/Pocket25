@@ -308,6 +308,9 @@ class ScanningService extends ChangeNotifier {
       _neighborFreqs = neighborFreqList.map((freq) => freq as int).toList();
       _neighborLastSeen = neighborLastSeenList.map((ts) => ts as int).toList();
       
+      // Update activity time when we receive network data (indicates valid P25 signal)
+      _lastActivityTime = DateTime.now();
+      
       if (kDebugMode) {
         print('Network update: $neighborCount neighbors');
         for (int i = 0; i < _neighborFreqs.length && i < 5; i++) {
@@ -779,12 +782,13 @@ class ScanningService extends ChangeNotifier {
     final now = DateTime.now();
     
     if (_state == ScanningState.locked) {
-      // Check if we've lost lock (no activity for 10 seconds)
+      // Check if we've lost lock (no activity for 5 seconds)
+      // Activity is updated by network/patch/GA/AFF events (valid P25 data)
       if (_lastActivityTime != null) {
         final timeSinceActivity = now.difference(_lastActivityTime!);
-        if (timeSinceActivity.inSeconds > 10) {
+        if (timeSinceActivity.inSeconds > 5) {
           if (kDebugMode) {
-            print('Lost lock on ${_currentFrequency} MHz, trying next channel');
+            print('Lost lock on ${_currentFrequency} MHz (no data for 5s), trying next channel');
           }
           _hasLock = false;
           _currentChannelIndex++;

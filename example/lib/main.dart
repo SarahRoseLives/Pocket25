@@ -376,6 +376,11 @@ class _MainScreenState extends State<MainScreen> {
           onStart: _start,
           onStop: _stop,
           onStatusUpdate: _updateStatus,
+          onNavigateToScanner: () {
+            setState(() {
+              _currentIndex = 0; // Switch to scanner tab
+            });
+          },
         );
       default:
         return const SizedBox.shrink();
