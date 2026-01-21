@@ -25,6 +25,7 @@ extern "C" {
 // Forward declare to avoid C++ incompatibility with headers
 void p25_sm_init(dsd_opts* opts, dsd_state* state);
 void p25_reset_iden_tables(dsd_state* state);
+int dsd_rtl_stream_tune(dsd_opts* opts, long int frequency);
 }
 
 // Native RTL-SDR USB support (when enabled)
@@ -2084,5 +2085,61 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetRetuneFrozen(
     
     g_retune_freeze.store(frozen);
     LOGI("Retune freeze set to: %s", frozen ? "true" : "false");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeRetune(
+    JNIEnv* env,
+    jobject thiz,
+    jint freqHz) {
+    
+    if (!g_opts) {
+        LOGE("Cannot retune: DSD opts not initialized");
+        return JNI_FALSE;
+    }
+    
+    LOGI("Retuning to %d Hz (explicit, bypassing freeze)", freqHz);
+    
+    // Temporarily unfreeze for this explicit retune
+    bool was_frozen = g_retune_freeze.load();
+    if (was_frozen) {
+        g_retune_freeze.store(false);
+    }
+    
+    // Call DSD's rtl_stream_tune function
+    int result = dsd_rtl_stream_tune(g_opts, (long int)freqHz);
+    
+    // Restore freeze state
+    if (was_frozen) {
+        g_retune_freeze.store(true);
+    }
+    
+    if (result == 0) {
+        LOGI("Retune successful");
+        return JNI_TRUE;
+    } else {
+        LOGE("Retune failed with code: %d", result);
+        return JNI_FALSE;
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeResetP25State(
+    JNIEnv* env,
+    jobject thiz) {
+    
+    LOGI("Resetting P25 state (frequency tables and state machine)");
+    
+    // Reset P25 frequency identifier tables
+    if (g_state) {
+        LOGI("Clearing P25 frequency identifier tables");
+        p25_reset_iden_tables(g_state);
+    }
+    
+    // Reinitialize P25 trunking state machine
+    if (g_opts && g_state) {
+        LOGI("Reinitializing P25 trunking state machine");
+        p25_sm_init(g_opts, g_state);
+    }
 }
 

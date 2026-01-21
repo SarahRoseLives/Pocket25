@@ -345,6 +345,8 @@ class DsdFlutterPlugin :
     private external fun nativeGetFilterMode(): Int
     private external fun nativeSetCustomArgs(args: String)
     private external fun nativeSetRetuneFrozen(frozen: Boolean)
+    private external fun nativeRetune(freqHz: Int): Boolean
+    private external fun nativeResetP25State()
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
@@ -636,6 +638,15 @@ class DsdFlutterPlugin :
             "setRetuneFrozen" -> {
                 val frozen = call.argument<Boolean>("frozen") ?: false
                 nativeSetRetuneFrozen(frozen)
+                result.success(null)
+            }
+            "retune" -> {
+                val freqHz = call.argument<Int>("freqHz") ?: 0
+                val success = nativeRetune(freqHz)
+                result.success(success)
+            }
+            "resetP25State" -> {
+                nativeResetP25State()
                 result.success(null)
             }
             else -> {

@@ -97,6 +97,7 @@ class ScanningService extends ChangeNotifier {
   
   ScanningState _state = ScanningState.idle;
   int? _currentSiteId;
+  int? _previousSiteId; // Track previous site for detecting site switches
   String? _currentSiteName;
   int? _currentSystemId;
   double? _currentFrequency;
@@ -137,6 +138,9 @@ class ScanningService extends ChangeNotifier {
   
   // HackRF state
   bool _hackrfStreaming = false;
+  
+  // RTL TCP state
+  bool _rtlTcpConnected = false;
   
   // Locked sites for GPS hopping
   Set<String> _lockedSiteKeys = {}; // Format: "systemId_siteId"
@@ -249,9 +253,31 @@ class ScanningService extends ChangeNotifier {
           }
           return; // Skip lock processing during flush period
         } else {
-          // Flush period complete
+          // Flush period complete - reset P25 state if this was a site switch
+          // to clear frequency tables learned from old buffered data
+          if (_pendingRetuneUnfreeze) {
+            if (kDebugMode) {
+              print('Buffer flush complete - resetting P25 state (keeping retunes frozen for site switch)');
+            }
+            _dsdPlugin.resetP25State();
+            _pendingRetuneUnfreeze = false;
+            // NOTE: We intentionally do NOT unfreeze retunes here for site switches
+            // Voice grant following would retune to the old site which still has signal
+            // Explicit CC hop retunes bypass the freeze, so scanning still works
+          }
           _rtlTcpReconnectTime = null;
         }
+      }
+      
+      // For native USB site switches: reset P25 state when we first get sync
+      // This clears frequency tables from old site before DSD can use them for grants
+      if (_settingsService.rtlSource == RtlSource.nativeUsb && _pendingRetuneUnfreeze && hasSync) {
+        if (kDebugMode) {
+          print('Native USB site switch - resetting P25 state (keeping retunes frozen)');
+        }
+        _dsdPlugin.resetP25State();
+        _pendingRetuneUnfreeze = false;
+        // Keep retunes frozen - explicit CC hop retunes bypass the freeze
       }
       
       // Update lock status based on sync
@@ -263,15 +289,6 @@ class ScanningService extends ChangeNotifier {
           _setState(ScanningState.locked);
           if (kDebugMode) {
             print('Control channel LOCKED at $_currentFrequency MHz');
-          }
-          
-          // Unfreeze retunes now that we've locked on new CC
-          if (_pendingRetuneUnfreeze) {
-            _pendingRetuneUnfreeze = false;
-            if (kDebugMode) {
-              print('Unfreezing retunes after CC lock');
-            }
-            _dsdPlugin.setRetuneFrozen(false);
           }
         }
       }
@@ -369,11 +386,17 @@ class ScanningService extends ChangeNotifier {
       return;
     }
     
+    // Detect if this is a site switch (not just restarting same site)
+    // Must capture current site BEFORE stopScanning() clears it
+    final int? oldSiteId = _currentSiteId;
+    final bool isSiteSwitch = _state != ScanningState.idle && oldSiteId != null && oldSiteId != siteId;
+    
     if (_state != ScanningState.idle) {
       await stopScanning();
     }
 
     try {
+      _previousSiteId = oldSiteId;
       _currentSiteId = siteId;
       _currentSiteName = siteName;
       _currentChannelIndex = 0;
@@ -414,10 +437,13 @@ class ScanningService extends ChangeNotifier {
       
       if (kDebugMode) {
         print('Starting scan for site $siteName with ${_controlChannels.length} control channels');
+        if (isSiteSwitch) {
+          print('Site switch detected ($_previousSiteId -> $siteId), will freeze retunes');
+        }
       }
       
       _setState(ScanningState.searching);
-      await _tryNextControlChannel();
+      await _tryNextControlChannel(freezeRetunes: isSiteSwitch);
       
       // Start lock check timer
       _lockCheckTimer = Timer.periodic(const Duration(seconds: 5), _checkLockStatus);
@@ -441,7 +467,7 @@ class ScanningService extends ChangeNotifier {
     }
   }
 
-  Future<void> _tryNextControlChannel() async {
+  Future<void> _tryNextControlChannel({bool freezeRetunes = false}) async {
     if (_currentChannelIndex >= _controlChannels.length) {
       // Tried all channels, restart from beginning
       if (kDebugMode) {
@@ -507,15 +533,31 @@ class ScanningService extends ChangeNotifier {
           }
           await _dsdPlugin.setRetuneFrozen(true);
           
+          // For site switches, mark pending unfreeze so the timer below won't unfreeze
+          if (freezeRetunes) {
+            _pendingRetuneUnfreeze = true;
+            if (kDebugMode) {
+              print('Site switch - retunes will stay frozen');
+            }
+          }
+          
           // Start the engine
           _onStart();
           
           // Unfreeze retunes after buffer settles (5 seconds for native USB)
+          // But only if this is NOT a site switch (site switches keep freeze until stop)
           Future.delayed(const Duration(seconds: 5), () async {
-            if (kDebugMode) {
-              print('Unfreezing retunes after native USB startup');
+            // Don't unfreeze if a site switch set _pendingRetuneUnfreeze
+            if (!_pendingRetuneUnfreeze) {
+              if (kDebugMode) {
+                print('Unfreezing retunes after native USB startup');
+              }
+              await _dsdPlugin.setRetuneFrozen(false);
+            } else {
+              if (kDebugMode) {
+                print('Skipping unfreeze - site switch in progress');
+              }
             }
-            await _dsdPlugin.setRetuneFrozen(false);
           });
         } else {
           // Device already open - need to stop engine, let it clean up USB, then restart with new frequency
@@ -523,11 +565,13 @@ class ScanningService extends ChangeNotifier {
             print('Retuning native USB RTL-SDR to ${_settingsService.frequencyHz} Hz');
           }
           
-          // Freeze retunes during system switch
-          if (kDebugMode) {
-            print('Freezing retunes during native USB system switch');
+          // Only freeze retunes during site switch, not control channel hopping
+          if (freezeRetunes) {
+            if (kDebugMode) {
+              print('Freezing retunes during native USB site switch');
+            }
+            await _dsdPlugin.setRetuneFrozen(true);
           }
-          await _dsdPlugin.setRetuneFrozen(true);
           
           // Clear our tracking of the USB device - engine will close it during stop
           _settingsService.clearNativeUsbDevice();
@@ -572,10 +616,12 @@ class ScanningService extends ChangeNotifier {
           // Start engine with new configuration
           _onStart();
           
-          // Mark that we need to unfreeze when CC locks
-          _pendingRetuneUnfreeze = true;
-          if (kDebugMode) {
-            print('Waiting for CC lock to unfreeze retunes');
+          // Mark that we need to unfreeze when CC locks (only if we froze)
+          if (freezeRetunes) {
+            _pendingRetuneUnfreeze = true;
+            if (kDebugMode) {
+              print('Waiting for CC lock to unfreeze retunes');
+            }
           }
         }
       } else if (_settingsService.rtlSource == RtlSource.hackrf) {
@@ -635,38 +681,83 @@ class ScanningService extends ChangeNotifier {
           notifyListeners();
         }
       } else {
-        // Remote rtl_tcp mode - reconnect with new frequency
-        // Note: stopScanning() already stopped DSD, so just reconnect and restart
-        
-        // IMPORTANT: Freeze retunes during system switch to prevent old buffered
-        // P25 grants from retuning back to old system frequencies
-        if (kDebugMode) {
-          print('Freezing retunes during rtl_tcp system switch');
-        }
-        await _dsdPlugin.setRetuneFrozen(true);
-        
-        if (kDebugMode) {
-          print('Reconnecting rtl_tcp at ${_settingsService.effectiveHost}:${_settingsService.effectivePort} freq ${_settingsService.frequencyHz} Hz');
-        }
-        
-        // Reconnect with new frequency (DSD is already stopped from stopScanning())
-        await _dsdPlugin.connect(
-          _settingsService.effectiveHost,
-          _settingsService.effectivePort,
-          _settingsService.frequencyHz,
-        );
-        
-        if (kDebugMode) {
-          print('Starting DSD with rtl_tcp at ${_settingsService.frequencyHz} Hz (retunes frozen until CC lock)');
-        }
-        
-        // Start DSD - retunes are frozen so old P25 grants won't cause switchback
-        _onStart();
-        
-        // Mark that we need to unfreeze when CC locks
-        _pendingRetuneUnfreeze = true;
-        if (kDebugMode) {
-          print('Waiting for CC lock to unfreeze retunes');
+        // Remote rtl_tcp mode
+        if (!_rtlTcpConnected || freezeRetunes) {
+          // First connection or site switch - need full stop/reconnect/start
+          
+          // Only freeze retunes during site switch to prevent old buffered
+          // P25 grants from retuning back to old site frequencies
+          if (freezeRetunes) {
+            if (kDebugMode) {
+              print('Freezing retunes during rtl_tcp site switch');
+            }
+            await _dsdPlugin.setRetuneFrozen(true);
+          }
+          
+          if (kDebugMode) {
+            print('Reconnecting rtl_tcp at ${_settingsService.effectiveHost}:${_settingsService.effectivePort} freq ${_settingsService.frequencyHz} Hz');
+          }
+          
+          // Reconnect with new frequency (DSD is already stopped from stopScanning())
+          await _dsdPlugin.connect(
+            _settingsService.effectiveHost,
+            _settingsService.effectivePort,
+            _settingsService.frequencyHz,
+          );
+          
+          _rtlTcpConnected = true;
+          
+          if (kDebugMode) {
+            if (freezeRetunes) {
+              print('Starting DSD with rtl_tcp at ${_settingsService.frequencyHz} Hz (retunes frozen until CC lock)');
+            } else {
+              print('Starting DSD with rtl_tcp at ${_settingsService.frequencyHz} Hz');
+            }
+          }
+          
+          // Start DSD
+          _onStart();
+          
+          // For site switches, explicitly retune to ensure rtl_tcp server changes frequency
+          // The connect() only configures DSD's input string, not the rtl_tcp server
+          if (freezeRetunes) {
+            if (kDebugMode) {
+              print('Sending explicit retune command to rtl_tcp server');
+            }
+            // Brief delay to let engine initialize
+            await Future.delayed(const Duration(milliseconds: 100));
+            await _dsdPlugin.retune(_settingsService.frequencyHz);
+            
+            // Keep retunes frozen until we lock on the new site
+            // The freeze prevents DSD from auto-retuning back to old site frequencies
+            // that it learns from buffered data. We'll unfreeze when CC lock is detected.
+            _pendingRetuneUnfreeze = true;
+            if (kDebugMode) {
+              print('Retunes frozen until CC lock on new site');
+            }
+          }
+          
+          // Set reconnect time to enable buffer flush period
+          _rtlTcpReconnectTime = DateTime.now();
+        } else {
+          // Already connected - just retune without restarting DSD
+          // This preserves P25 state machine for control channel hopping
+          if (kDebugMode) {
+            print('Retuning rtl_tcp to ${_settingsService.frequencyHz} Hz (fast retune, no restart)');
+          }
+          
+          final success = await _dsdPlugin.retune(_settingsService.frequencyHz);
+          
+          if (!success) {
+            if (kDebugMode) {
+              print('Retune failed, will try reconnect on next hop');
+            }
+            _rtlTcpConnected = false;
+          } else {
+            // Set reconnect time to enable buffer flush period
+            // Even with fast retune, rtl_tcp server still has buffered samples
+            _rtlTcpReconnectTime = DateTime.now();
+          }
         }
       }
       
@@ -739,6 +830,9 @@ class ScanningService extends ChangeNotifier {
       }
     }
     
+    // Reset rtl_tcp connection tracking
+    _rtlTcpConnected = false;
+    
     // Stop engine - it will handle closing USB device internally
     // Must await to ensure DSP is fully stopped before starting new scan
     await _onStop();
@@ -764,6 +858,7 @@ class ScanningService extends ChangeNotifier {
     _hasLock = false;
     _lastActivityTime = null;
     _pendingRetuneUnfreeze = false;
+    _rtlTcpConnected = false; // Reset connection tracking
     notifyListeners();
   }
   

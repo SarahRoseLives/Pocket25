@@ -265,4 +265,24 @@ class DsdFlutter {
   Future<void> setRetuneFrozen(bool frozen) {
     return DsdFlutterPlatform.instance.setRetuneFrozen(frozen);
   }
+  
+  /// Retune to a new frequency without restarting DSD
+  /// 
+  /// This is faster than stop/reconnect/start and preserves P25 state machine.
+  /// Use this for control channel hopping within the same site.
+  /// For site switches, use stop/connect/start to reset state.
+  /// 
+  /// [freqHz] is the new frequency in Hz
+  /// Returns true if retune was successful
+  Future<bool> retune(int freqHz) {
+    return DsdFlutterPlatform.instance.retune(freqHz);
+  }
+  
+  /// Reset P25 state (frequency tables and state machine)
+  /// 
+  /// Call this during site switches to clear old P25 frequency mappings
+  /// that could cause DSD to retune back to the old site.
+  Future<void> resetP25State() {
+    return DsdFlutterPlatform.instance.resetP25State();
+  }
 }

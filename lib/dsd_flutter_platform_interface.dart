@@ -212,4 +212,15 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
   Future<void> setRetuneFrozen(bool frozen) {
     throw UnimplementedError('setRetuneFrozen() has not been implemented.');
   }
+  
+  /// Retune to a new frequency without restarting DSD
+  /// This preserves P25 state machine and is faster than stop/reconnect/start
+  Future<bool> retune(int freqHz) {
+    throw UnimplementedError('retune() has not been implemented.');
+  }
+  
+  /// Reset P25 state (frequency tables and state machine)
+  Future<void> resetP25State() {
+    throw UnimplementedError('resetP25State() has not been implemented.');
+  }
 }

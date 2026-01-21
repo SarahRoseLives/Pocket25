@@ -317,4 +317,17 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
       'frozen': frozen,
     });
   }
+  
+  @override
+  Future<bool> retune(int freqHz) async {
+    final result = await methodChannel.invokeMethod<bool>('retune', {
+      'freqHz': freqHz,
+    });
+    return result ?? false;
+  }
+  
+  @override
+  Future<void> resetP25State() async {
+    await methodChannel.invokeMethod('resetP25State');
+  }
 }
