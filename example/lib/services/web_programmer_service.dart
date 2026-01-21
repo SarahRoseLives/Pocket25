@@ -197,6 +197,15 @@ class WebProgrammerService {
       }
     }
 
+    // CSV Export/Import API
+    if (request.method == 'GET' && path == 'api/systems/export/csv') {
+      return await _exportSystemsToCSV();
+    }
+
+    if (request.method == 'POST' && path == 'api/systems/import/csv') {
+      return await _importSystemsFromCSV(request);
+    }
+
     return Response.notFound('Not Found');
   }
 
@@ -599,6 +608,234 @@ class WebProgrammerService {
     }
   }
 
+  Future<Response> _exportSystemsToCSV() async {
+    try {
+      final systems = await _dbService.getSystems();
+      final StringBuffer csvBuffer = StringBuffer();
+      
+      // CSV Headers
+      csvBuffer.writeln('SystemID,SystemName,SiteID,SiteNumber,SiteName,Latitude,Longitude,NAC,ControlFrequency,ControlPriority,TalkgroupID,TalkgroupName,TalkgroupCategory,TalkgroupTag');
+      
+      for (final system in systems) {
+        final systemId = system['system_id'] as int;
+        final systemName = system['system_name'] as String;
+        
+        // Get sites for this system
+        final sites = await _dbService.getSitesBySystem(systemId);
+        
+        // Get talkgroups for this system
+        final talkgroups = await _dbService.getTalkgroups(systemId);
+        
+        if (sites.isEmpty && talkgroups.isEmpty) {
+          // System with no sites or talkgroups
+          csvBuffer.writeln('$systemId,"$systemName",,,,,,,,,,,');
+        } else {
+          // Export sites with their control channels
+          for (final site in sites) {
+            final siteId = site['site_id'] as int;
+            final siteNumber = site['site_number'] ?? '';
+            final siteName = _escapeCSV(site['site_name'] as String);
+            final latitude = site['latitude'] ?? '';
+            final longitude = site['longitude'] ?? '';
+            final nac = site['nac'] ?? '';
+            
+            // Get control channels for this site
+            final controlChannels = await _dbService.getControlChannels(siteId);
+            
+            if (controlChannels.isEmpty) {
+              // Site with no control channels
+              csvBuffer.writeln('$systemId,"$systemName",$siteId,$siteNumber,"$siteName",$latitude,$longitude,"$nac",,,,,,');
+            } else {
+              for (final channel in controlChannels) {
+                final frequency = channel['frequency'];
+                final priority = channel['priority'] ?? 0;
+                csvBuffer.writeln('$systemId,"$systemName",$siteId,$siteNumber,"$siteName",$latitude,$longitude,"$nac",$frequency,$priority,,,,');
+              }
+            }
+          }
+          
+          // Export talkgroups
+          for (final tg in talkgroups) {
+            final tgDecimal = tg['tg_decimal'];
+            final tgName = _escapeCSV(tg['tg_name'] as String);
+            final tgCategory = _escapeCSV(tg['tg_category'] as String? ?? '');
+            final tgTag = _escapeCSV(tg['tg_tag'] as String? ?? '');
+            csvBuffer.writeln('$systemId,"$systemName",,,,,,,$tgDecimal,"$tgName","$tgCategory","$tgTag"');
+          }
+        }
+      }
+      
+      return Response.ok(
+        csvBuffer.toString(),
+        headers: {
+          'Content-Type': 'text/csv',
+          'Content-Disposition': 'attachment; filename="pocket25_systems.csv"',
+        },
+      );
+    } catch (e) {
+      return Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  Future<Response> _importSystemsFromCSV(Request request) async {
+    try {
+      final csvContent = await request.readAsString();
+      final lines = const LineSplitter().convert(csvContent);
+      
+      if (lines.isEmpty) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'Empty CSV file'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      
+      // Skip header row
+      final dataLines = lines.skip(1);
+      
+      int systemsAdded = 0;
+      int sitesAdded = 0;
+      int controlChannelsAdded = 0;
+      int talkgroupsAdded = 0;
+      
+      final Map<int, bool> processedSystems = {};
+      final Map<int, bool> processedSites = {};
+      
+      for (final line in dataLines) {
+        if (line.trim().isEmpty) continue;
+        
+        final fields = _parseCSVLine(line);
+        if (fields.length < 14) continue;
+        
+        try {
+          final systemId = int.tryParse(fields[0]);
+          final systemName = fields[1];
+          
+          if (systemId == null || systemName.isEmpty) continue;
+          
+          // Add system if not already processed
+          if (!processedSystems.containsKey(systemId)) {
+            await _dbService.insertSystem(systemId, systemName);
+            processedSystems[systemId] = true;
+            systemsAdded++;
+          }
+          
+          // Add site if present
+          if (fields[2].isNotEmpty) {
+            final siteId = int.tryParse(fields[2]);
+            final siteNumber = int.tryParse(fields[3]);
+            final siteName = fields[4];
+            final latitude = double.tryParse(fields[5]);
+            final longitude = double.tryParse(fields[6]);
+            final nac = fields[7];
+            
+            if (siteId != null && siteName.isNotEmpty && !processedSites.containsKey(siteId)) {
+              await _dbService.insertSite({
+                'site_id': siteId,
+                'system_id': systemId,
+                'site_number': siteNumber,
+                'site_name': siteName,
+                'latitude': latitude,
+                'longitude': longitude,
+                'nac': nac.isNotEmpty ? nac : null,
+              });
+              processedSites[siteId] = true;
+              sitesAdded++;
+            }
+            
+            // Add control channel if present
+            if (fields[8].isNotEmpty && siteId != null) {
+              final frequency = double.tryParse(fields[8]);
+              final priority = int.tryParse(fields[9]) ?? 0;
+              
+              if (frequency != null) {
+                await _dbService.insertControlChannel(siteId, frequency, priority);
+                controlChannelsAdded++;
+              }
+            }
+          }
+          
+          // Add talkgroup if present
+          if (fields[10].isNotEmpty) {
+            final tgDecimal = int.tryParse(fields[10]);
+            final tgName = fields[11];
+            final tgCategory = fields[12];
+            final tgTag = fields[13];
+            
+            if (tgDecimal != null && tgName.isNotEmpty) {
+              await _dbService.insertTalkgroup(
+                systemId,
+                tgDecimal,
+                tgName,
+                category: tgCategory.isNotEmpty ? tgCategory : null,
+                tag: tgTag.isNotEmpty ? tgTag : null,
+              );
+              talkgroupsAdded++;
+            }
+          }
+        } catch (e) {
+          developer.log('Error processing CSV line: $line - $e');
+          continue;
+        }
+      }
+      
+      return Response.ok(
+        jsonEncode({
+          'success': true,
+          'systemsAdded': systemsAdded,
+          'sitesAdded': sitesAdded,
+          'controlChannelsAdded': controlChannelsAdded,
+          'talkgroupsAdded': talkgroupsAdded,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e) {
+      return Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  String _escapeCSV(String value) {
+    // Escape quotes and wrap in quotes if contains comma, quote, or newline
+    if (value.contains(',') || value.contains('"') || value.contains('\n')) {
+      return '"${value.replaceAll('"', '""')}"';
+    }
+    return value;
+  }
+
+  List<String> _parseCSVLine(String line) {
+    final List<String> fields = [];
+    StringBuffer currentField = StringBuffer();
+    bool inQuotes = false;
+    
+    for (int i = 0; i < line.length; i++) {
+      final char = line[i];
+      
+      if (char == '"') {
+        if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
+          // Escaped quote
+          currentField.write('"');
+          i++;
+        } else {
+          // Toggle quote state
+          inQuotes = !inQuotes;
+        }
+      } else if (char == ',' && !inQuotes) {
+        fields.add(currentField.toString());
+        currentField.clear();
+      } else {
+        currentField.write(char);
+      }
+    }
+    
+    fields.add(currentField.toString());
+    return fields;
+  }
+
   String _getIndexPage() {
     return r'''
 <!DOCTYPE html>
@@ -821,6 +1058,9 @@ class WebProgrammerService {
                 <h2 style="margin: 0;">Configured Systems</h2>
                 <div style="display: flex; gap: 10px;">
                     <button onclick="window.location.href='/locked-sites'">🔒 Locked Sites</button>
+                    <button onclick="exportCSV()">📥 Export CSV</button>
+                    <button onclick="document.getElementById('csvFile').click()">📤 Import CSV</button>
+                    <input type="file" id="csvFile" accept=".csv" style="display: none;" onchange="importCSV(event)">
                     <button onclick="window.location.href='/create'">+ Create New System</button>
                 </div>
             </div>
@@ -831,6 +1071,59 @@ class WebProgrammerService {
     </div>
     
     <script>
+        async function exportCSV() {
+            try {
+                const response = await fetch('/api/systems/export/csv');
+                if (!response.ok) throw new Error('Export failed');
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'pocket25_systems.csv';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                alert('Systems exported successfully!');
+            } catch (error) {
+                alert('Error exporting systems: ' + error.message);
+            }
+        }
+        
+        async function importCSV(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (!confirm('Import systems from CSV? This will add new systems/sites/talkgroups. Existing data will not be deleted.')) {
+                event.target.value = '';
+                return;
+            }
+            
+            try {
+                const text = await file.text();
+                const response = await fetch('/api/systems/import/csv', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/csv' },
+                    body: text
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert(`Import successful!\n\nSystems: ${result.systemsAdded}\nSites: ${result.sitesAdded}\nControl Channels: ${result.controlChannelsAdded}\nTalkgroups: ${result.talkgroupsAdded}`);
+                    loadSystems();
+                } else {
+                    alert('Error importing CSV: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error importing CSV: ' + error.message);
+            } finally {
+                event.target.value = '';
+            }
+        }
+        
         async function deleteSystem(systemId, systemName) {
             if (!confirm(`Delete system "${systemName}" and all its sites/talkgroups? This cannot be undone.`)) return;
             
@@ -1350,7 +1643,149 @@ class WebProgrammerService {
         }
         
         async function editSite(siteId) {
-            alert('Site editing form coming soon! Site ID: ' + siteId);
+            const site = currentSystem.sites.find(s => s.site_id === siteId);
+            if (!site) return;
+            
+            const editForm = document.createElement('div');
+            editForm.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+            
+            editForm.innerHTML = `
+                <div style="background: #16213e; padding: 30px; border-radius: 15px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">
+                    <h2 style="color: #667eea; margin-bottom: 20px;">Edit Site</h2>
+                    
+                    <label style="display: block; margin-bottom: 10px; color: #e0e0e0;">
+                        Site Name:
+                        <input type="text" id="edit_site_name" value="${site.site_name}" 
+                               style="width: 100%; padding: 8px; margin-top: 5px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
+                    </label>
+                    
+                    <label style="display: block; margin-bottom: 10px; color: #e0e0e0;">
+                        Site Number:
+                        <input type="number" id="edit_site_number" value="${site.site_number || ''}" 
+                               style="width: 100%; padding: 8px; margin-top: 5px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
+                    </label>
+                    
+                    <label style="display: block; margin-bottom: 10px; color: #e0e0e0;">
+                        NAC:
+                        <input type="text" id="edit_nac" value="${site.nac || ''}" 
+                               style="width: 100%; padding: 8px; margin-top: 5px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
+                    </label>
+                    
+                    <label style="display: block; margin-bottom: 10px; color: #e0e0e0;">
+                        Latitude:
+                        <input type="number" step="any" id="edit_latitude" value="${site.latitude || ''}" 
+                               style="width: 100%; padding: 8px; margin-top: 5px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
+                    </label>
+                    
+                    <label style="display: block; margin-bottom: 20px; color: #e0e0e0;">
+                        Longitude:
+                        <input type="number" step="any" id="edit_longitude" value="${site.longitude || ''}" 
+                               style="width: 100%; padding: 8px; margin-top: 5px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
+                    </label>
+                    
+                    <h3 style="color: #764ba2; margin-bottom: 10px;">Control Channels</h3>
+                    <div id="edit_control_channels"></div>
+                    <button onclick="addControlChannelRow()" style="margin: 10px 0;">+ Add Channel</button>
+                    
+                    <div style="margin-top: 20px; display: flex; gap: 10px;">
+                        <button onclick="saveSiteEdit(${siteId})">Save</button>
+                        <button class="secondary" onclick="closeEditForm()">Cancel</button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(editForm);
+            
+            // Populate control channels
+            const channelsDiv = document.getElementById('edit_control_channels');
+            site.control_channels.forEach((ch, index) => {
+                addControlChannelRow(ch.frequency, ch.priority, index);
+            });
+            
+            // If no channels, add one empty row
+            if (site.control_channels.length === 0) {
+                addControlChannelRow();
+            }
+        }
+        
+        function addControlChannelRow(frequency = '', priority = 0, index = null) {
+            const channelsDiv = document.getElementById('edit_control_channels');
+            if (!channelsDiv) return;
+            
+            const rowIndex = index !== null ? index : channelsDiv.children.length;
+            const row = document.createElement('div');
+            row.style.cssText = 'display: flex; gap: 10px; margin-bottom: 10px; align-items: center;';
+            row.innerHTML = `
+                <input type="number" step="0.001" placeholder="Frequency (MHz)" value="${frequency}" 
+                       class="cc_freq" data-index="${rowIndex}"
+                       style="flex: 1; padding: 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
+                <input type="number" placeholder="Priority" value="${priority}" 
+                       class="cc_priority" data-index="${rowIndex}"
+                       style="width: 80px; padding: 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
+                <button class="small danger" onclick="this.parentElement.remove()">✕</button>
+            `;
+            channelsDiv.appendChild(row);
+        }
+        
+        function closeEditForm() {
+            const modal = document.querySelector('[style*="position: fixed"]');
+            if (modal) modal.remove();
+        }
+        
+        async function saveSiteEdit(siteId) {
+            const siteName = document.getElementById('edit_site_name').value.trim();
+            const siteNumber = document.getElementById('edit_site_number').value.trim();
+            const nac = document.getElementById('edit_nac').value.trim();
+            const latitude = document.getElementById('edit_latitude').value.trim();
+            const longitude = document.getElementById('edit_longitude').value.trim();
+            
+            if (!siteName) {
+                alert('Site name is required');
+                return;
+            }
+            
+            // Collect control channels
+            const freqInputs = document.querySelectorAll('.cc_freq');
+            const priorityInputs = document.querySelectorAll('.cc_priority');
+            const controlChannels = [];
+            
+            for (let i = 0; i < freqInputs.length; i++) {
+                const freq = parseFloat(freqInputs[i].value);
+                const priority = parseInt(priorityInputs[i].value) || 0;
+                if (!isNaN(freq) && freq > 0) {
+                    controlChannels.push({ frequency: freq, priority: priority });
+                }
+            }
+            
+            if (controlChannels.length === 0) {
+                alert('At least one control channel is required');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/systems/${systemId}/sites/${siteId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        site_name: siteName,
+                        site_number: siteNumber ? parseInt(siteNumber) : null,
+                        nac: nac || null,
+                        latitude: latitude ? parseFloat(latitude) : null,
+                        longitude: longitude ? parseFloat(longitude) : null,
+                        control_channels: controlChannels
+                    })
+                });
+                
+                if (response.ok) {
+                    closeEditForm();
+                    await loadSystem();
+                } else {
+                    const error = await response.json();
+                    alert('Failed to update site: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
         }
         
         async function deleteSite(siteId, siteName) {
