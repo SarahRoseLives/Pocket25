@@ -203,6 +203,7 @@ class ScanningService extends ChangeNotifier {
               // 800 MHz band downlink
               _downlinkFreq = freq;
               if (kDebugMode) print('DEBUG: Set as 800 MHz downlink');
+              _updateChannelIndexFromFrequency(freq);
             } else if (freq >= 806 && freq <= 825) {
               // 800 MHz band uplink
               _uplinkFreq = freq;
@@ -211,6 +212,7 @@ class ScanningService extends ChangeNotifier {
               // 700 MHz band downlink
               _downlinkFreq = freq;
               if (kDebugMode) print('DEBUG: Set as 700 MHz downlink');
+              _updateChannelIndexFromFrequency(freq);
             } else if (freq >= 792 && freq <= 806) {
               // 700 MHz band uplink
               _uplinkFreq = freq;
@@ -874,6 +876,36 @@ class ScanningService extends ChangeNotifier {
   void _setState(ScanningState newState) {
     _state = newState;
     notifyListeners();
+  }
+  
+  /// Update the current channel index based on the actual frequency we're tuned to
+  void _updateChannelIndexFromFrequency(double freq) {
+    // Only update if this frequency matches what we think we're tuned to
+    // P25 systems broadcast info about ALL channels, not just the one we're on
+    if (_currentFrequency != null && ((_currentFrequency! - freq).abs() > 0.001)) {
+      // This is a different channel being advertised, not the one we're on
+      return;
+    }
+    
+    // Find which control channel matches this frequency (within 0.001 MHz tolerance)
+    for (int i = 0; i < _controlChannels.length; i++) {
+      final channelFreq = _controlChannels[i]['frequency'] as double;
+      if ((channelFreq - freq).abs() < 0.001) {
+        if (_currentChannelIndex != i) {
+          _currentChannelIndex = i;
+          if (kDebugMode) {
+            print('Updated channel index to ${i + 1}/${_controlChannels.length} based on frequency $freq MHz');
+          }
+          notifyListeners();
+        }
+        return;
+      }
+    }
+    
+    // If we didn't find a match, log it
+    if (kDebugMode) {
+      print('Warning: Could not find channel index for frequency $freq MHz');
+    }
   }
   
   /// Load sites for GPS hopping in background (non-blocking)
