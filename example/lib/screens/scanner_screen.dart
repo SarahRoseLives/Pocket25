@@ -70,127 +70,184 @@ class ScannerScreen extends StatelessWidget {
   }
 
   Widget _buildCurrentCallPanel(BuildContext context) {
-    if (currentCall == null) {
-      return Container(
-        color: Colors.grey[900],
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Status header
-            Row(
-              children: [
-                Icon(
-                  isRunning ? Icons.radio : Icons.radio_button_off,
-                  size: _iconSize(context, 28),
-                  color: isRunning ? Colors.green : Colors.grey[700],
-                ),
-                SizedBox(width: _spacing(context, 10)),
-                Text(
-                  isRunning ? 'SCANNING' : 'SCANNER IDLE',
-                  style: TextStyle(
-                    fontSize: _fontSize(context, 22),
-                    color: isRunning ? Colors.green : Colors.grey[500],
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-                if (isRunning) ...[
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 24),
-            
-            // Site information and TSBK count in a row
-            if (isRunning && scanningService.currentSiteName != null) ...[
+    final call = currentCall;
+    
+    return Column(
+      children: [
+        // Top section: System Information (always visible)
+        Container(
+          color: Colors.blueGrey[900],
+          padding: EdgeInsets.all(_spacing(context, 12)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Status header with scanner state
               Row(
                 children: [
-                  Expanded(
-                    child: Builder(
-                      builder: (context) => GestureDetector(
-                        onLongPress: () => _showSiteLockDialog(context),
-                        child: _buildInfoRowWithExtraIcon(
-                          'Site',
-                          scanningService.currentSiteName!,
-                          scanningService.isCurrentSiteLocked ? Icons.lock : Icons.cell_tower,
-                          scanningService.isCurrentSiteLocked ? Colors.orange : Colors.cyan,
-                          context,
-                          extraIcon: scanningService.gpsHoppingEnabled ? Icons.my_location : null,
-                          extraIconColor: Colors.purple,
-                        ),
-                      ),
+                  Icon(
+                    isRunning ? Icons.radio : Icons.radio_button_off,
+                    size: _iconSize(context, 24),
+                    color: isRunning ? Colors.green : Colors.grey[700],
+                  ),
+                  SizedBox(width: _spacing(context, 8)),
+                  Text(
+                    isRunning ? 'SCANNING' : 'IDLE',
+                    style: TextStyle(
+                      fontSize: _fontSize(context, 16),
+                      color: isRunning ? Colors.green : Colors.grey[500],
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2,
                     ),
                   ),
-                  if (scanningService.tsbkCount > 0) ...[
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildInfoRow(
-                        'TSBK',
-                        '${scanningService.tsbkCount}',
-                        Icons.swap_vert,
-                        Colors.teal,
-                        context,
+                  if (isRunning) ...[
+                    SizedBox(width: _spacing(context, 8)),
+                    SizedBox(
+                      width: _iconSize(context, 16),
+                      height: _iconSize(context, 16),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
                       ),
                     ),
                   ],
+                  const Spacer(),
+                  // Sync status indicator
+                  if (isRunning)
+                    Row(
+                      children: [
+                        Icon(
+                          scanningService.hasLock ? Icons.lock : Icons.search,
+                          size: _iconSize(context, 16),
+                          color: scanningService.hasLock ? Colors.green : Colors.orange,
+                        ),
+                        SizedBox(width: _spacing(context, 4)),
+                        Text(
+                          scanningService.hasLock ? 'LOCKED' : 'SEARCHING',
+                          style: TextStyle(
+                            fontSize: _fontSize(context, 12),
+                            color: scanningService.hasLock ? Colors.green : Colors.orange,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
                 ],
               ),
-              const SizedBox(height: 12),
-            ],
-            
-            // Control Channel
-            if (isRunning && scanningService.currentFrequency != null) ...[
-              _buildInfoRow(
-                'Control Channel',
-                '${scanningService.currentFrequency!.toStringAsFixed(4)} MHz',
-                Icons.settings_input_antenna,
-                Colors.blue,
-                context,
-              ),
-              if (scanningService.totalChannels > 1) ...[
-                const SizedBox(height: 6),
-                Padding(
-                  padding: const EdgeInsets.only(left: 36),
-                  child: Text(
-                    'Channel ${scanningService.currentChannelIndex + 1} of ${scanningService.totalChannels}',
-                    style: TextStyle(
-                      fontSize: _fontSize(context, 12),
-                      color: Colors.grey[600],
+              
+              if (isRunning) ...[
+                SizedBox(height: _spacing(context, 12)),
+                Divider(color: Colors.grey[700], height: 1),
+                SizedBox(height: _spacing(context, 12)),
+                
+                // Site information row
+                if (scanningService.currentSiteName != null)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: _spacing(context, 8)),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Builder(
+                            builder: (context) => GestureDetector(
+                              onLongPress: () => _showSiteLockDialog(context),
+                              child: _buildCompactInfoRow(
+                                scanningService.isCurrentSiteLocked ? Icons.lock : Icons.cell_tower,
+                                scanningService.currentSiteName!,
+                                scanningService.isCurrentSiteLocked ? Colors.orange : Colors.cyan,
+                                context,
+                                extraIcon: scanningService.gpsHoppingEnabled ? Icons.my_location : null,
+                                extraIconColor: Colors.purple,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (scanningService.tsbkCount > 0) ...[
+                          SizedBox(width: _spacing(context, 12)),
+                          _buildCompactInfoRow(
+                            Icons.swap_vert,
+                            'TSBK: ${scanningService.tsbkCount}',
+                            Colors.teal,
+                            context,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                ),
+                
+                // Control Channel info
+                if (scanningService.currentFrequency != null)
+                  _buildCompactInfoRow(
+                    Icons.settings_input_antenna,
+                    '${scanningService.currentFrequency!.toStringAsFixed(4)} MHz'
+                        '${scanningService.totalChannels > 1 ? ' (${scanningService.currentChannelIndex + 1}/${scanningService.totalChannels})' : ''}',
+                    Colors.blue,
+                    context,
+                  ),
               ],
-              const SizedBox(height: 12),
             ],
-            
-            // Sync Status
-            if (isRunning) ...[
-              _buildInfoRow(
-                'Sync Status',
-                scanningService.hasLock ? 'LOCKED' : 'SEARCHING',
-                scanningService.hasLock ? Icons.lock : Icons.search,
-                scanningService.hasLock ? Colors.green : Colors.orange,
-                context,
+          ),
+        ),
+        
+        // Bottom section: Call Information (always visible)
+        Expanded(
+          child: call != null ? _buildActiveCallSection(call, context) : _buildIdleCallSection(context),
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildCompactInfoRow(IconData icon, String text, Color color, BuildContext context, {IconData? extraIcon, Color? extraIconColor}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: _iconSize(context, 18), color: color),
+        SizedBox(width: _spacing(context, 6)),
+        Flexible(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: _fontSize(context, 14),
+              color: Colors.white,
+              fontWeight: FontWeight.w500,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (extraIcon != null) ...[
+          SizedBox(width: _spacing(context, 6)),
+          Icon(extraIcon, size: _iconSize(context, 16), color: extraIconColor ?? Colors.white),
+        ],
+      ],
+    );
+  }
+  
+  Widget _buildIdleCallSection(BuildContext context) {
+    return Container(
+      color: Colors.grey[900],
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.headset_off,
+              size: _iconSize(context, 64),
+              color: Colors.grey[700],
+            ),
+            SizedBox(height: _spacing(context, 16)),
+            Text(
+              isRunning ? 'No Active Call' : 'Scanner Stopped',
+              style: TextStyle(
+                fontSize: _fontSize(context, 20),
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
               ),
-              const SizedBox(height: 12),
-            ],
+            ),
           ],
         ),
-      );
-    }
-
-    final call = currentCall!;
-    
-    // Wrap with GestureDetector for long-press to mute/unmute
+      ),
+    );
+  }
+  
+  Widget _buildActiveCallSection(CallEvent call, BuildContext context) {
     return GestureDetector(
       onLongPress: () {
         if (onToggleMute != null) {
@@ -201,141 +258,156 @@ class ScannerScreen extends StatelessWidget {
         color: call.isMuted 
             ? Colors.grey[850] 
             : (call.isEmergency ? Colors.red[900] : Colors.grey[900]),
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(_spacing(context, 16)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Status bar - fixed at top
-          Row(
-            children: [
-              _buildStatusChip(
-                isRunning ? 'ACTIVE' : 'IDLE',
-                isRunning ? Colors.green : Colors.grey,
-                context,
-              ),
-              const SizedBox(width: 6),
-              if (call.isMuted)
-                Row(
-                  children: [
-                    _buildStatusChip('MUTED', Colors.grey[700]!, context),
-                    const SizedBox(width: 6),
-                  ],
+          children: [
+            // Status chips and duration
+            Row(
+              children: [
+                _buildStatusChip(
+                  'ACTIVE',
+                  Colors.green,
+                  context,
                 ),
-              if (scanningService.gpsHoppingEnabled)
-                Row(
-                  children: [
-                    _buildStatusChip('GPS', Colors.blue, context),
-                    const SizedBox(width: 6),
-                  ],
-                ),
-              if (call.isEmergency)
-                _buildStatusChip('EMERGENCY', Colors.red, context),
-              if (call.isEncrypted)
-                Padding(
-                  padding: const EdgeInsets.only(left: 6),
-                  child: _buildStatusChip('ENC', Colors.orange, context),
-                ),
-              const Spacer(),
-              Text(
-                call.durationDisplay,
-                style: TextStyle(
-                  fontSize: _fontSize(context, 16),
-                  color: Colors.white70,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          // Main content - flexible
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Call type label
-                  Text(
-                    call.callType.toUpperCase(),
-                    style: TextStyle(
-                      fontSize: _fontSize(context, 12),
-                      color: Colors.cyan[300],
-                      letterSpacing: 2,
-                    ),
+                SizedBox(width: _spacing(context, 6)),
+                if (call.isMuted)
+                  Row(
+                    children: [
+                      _buildStatusChip('MUTED', Colors.grey[700]!, context),
+                      SizedBox(width: _spacing(context, 6)),
+                    ],
                   ),
-                  SizedBox(height: _spacing(context, 4)),
-                  // Main talkgroup display
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      call.talkgroupDisplay,
-                      style: TextStyle(
-                        fontSize: _fontSize(context, 48),
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
+                if (scanningService.gpsHoppingEnabled)
+                  Row(
+                    children: [
+                      _buildStatusChip('GPS', Colors.blue, context),
+                      SizedBox(width: _spacing(context, 6)),
+                    ],
                   ),
-                  if (call.groupName.isEmpty && call.talkgroup > 0)
+                if (call.isEmergency)
+                  Padding(
+                    padding: EdgeInsets.only(right: _spacing(context, 6)),
+                    child: _buildStatusChip('EMERGENCY', Colors.red, context),
+                  ),
+                if (call.isEncrypted)
+                  _buildStatusChip('ENC', Colors.orange, context),
+                const Spacer(),
+                Text(
+                  call.durationDisplay,
+                  style: TextStyle(
+                    fontSize: _fontSize(context, 16),
+                    color: Colors.white70,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: _spacing(context, 16)),
+            
+            // Main content - flexible
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Call type label
                     Text(
-                      'TG ${call.talkgroup}',
+                      call.callType.toUpperCase(),
                       style: TextStyle(
-                        fontSize: _fontSize(context, 14),
-                        color: Colors.grey[500],
-                      ),
-                    ),
-                  const SizedBox(height: 16),
-                  // Source info
-                  if (call.sourceDisplay.isNotEmpty) ...[
-                    Text(
-                      'SOURCE',
-                      style: TextStyle(
-                        fontSize: _fontSize(context, 10),
-                        color: Colors.grey[500],
+                        fontSize: _fontSize(context, 12),
+                        color: Colors.cyan[300],
                         letterSpacing: 2,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    SizedBox(height: _spacing(context, 2)),
+                    SizedBox(height: _spacing(context, 8)),
+                    
+                    // Main talkgroup display
                     FittedBox(
                       fit: BoxFit.scaleDown,
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        call.sourceDisplay,
+                        call.talkgroupDisplay,
                         style: TextStyle(
-                          fontSize: _fontSize(context, 24),
+                          fontSize: _fontSize(context, 40),
+                          fontWeight: FontWeight.bold,
                           color: Colors.white,
+                          height: 1.1,
                         ),
                       ),
                     ),
-                    if (call.sourceName.isEmpty && call.sourceId > 0)
-                      Text(
-                        'ID ${call.sourceId}',
-                        style: TextStyle(
-                          fontSize: _fontSize(context, 12),
-                          color: Colors.grey[500],
+                    if (call.groupName.isEmpty && call.talkgroup > 0)
+                      Padding(
+                        padding: EdgeInsets.only(top: _spacing(context, 4)),
+                        child: Text(
+                          'TG ${call.talkgroup}',
+                          style: TextStyle(
+                            fontSize: _fontSize(context, 14),
+                            color: Colors.grey[500],
+                          ),
                         ),
                       ),
+                    
+                    // Source info
+                    if (call.sourceDisplay.isNotEmpty) ...[
+                      SizedBox(height: _spacing(context, 20)),
+                      Text(
+                        'SOURCE',
+                        style: TextStyle(
+                          fontSize: _fontSize(context, 10),
+                          color: Colors.grey[500],
+                          letterSpacing: 2,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: _spacing(context, 6)),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          call.sourceDisplay,
+                          style: TextStyle(
+                            fontSize: _fontSize(context, 28),
+                            color: Colors.white,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      if (call.sourceName.isEmpty && call.sourceId > 0)
+                        Padding(
+                          padding: EdgeInsets.only(top: _spacing(context, 4)),
+                          child: Text(
+                            'ID ${call.sourceId}',
+                            style: TextStyle(
+                              fontSize: _fontSize(context, 12),
+                              color: Colors.grey[500],
+                            ),
+                          ),
+                        ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-          ),
-          // System info row - fixed at bottom
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 12,
-            runSpacing: 4,
-            children: [
-              if (call.nacDisplay.isNotEmpty)
-                _buildInfoChip('NAC', call.nacDisplay, context),
-              if (call.systemName.isNotEmpty)
-                _buildInfoChip('SYS', call.systemName, context),
-              if (call.slot > 0)
-                _buildInfoChip('SLOT', call.slot.toString(), context),
-            ],
-          ),
-        ],
-      ),
+            
+            // System info chips at bottom
+            SizedBox(height: _spacing(context, 12)),
+            Wrap(
+              spacing: _spacing(context, 12),
+              runSpacing: _spacing(context, 8),
+              children: [
+                if (call.nacDisplay.isNotEmpty)
+                  _buildInfoChip('NAC', call.nacDisplay, context),
+                if (call.systemName.isNotEmpty)
+                  _buildInfoChip('SYS', call.systemName, context),
+                if (call.slot > 0)
+                  _buildInfoChip('SLOT', call.slot.toString(), context),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
