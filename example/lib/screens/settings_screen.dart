@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/settings_service.dart';
 import '../services/scanning_service.dart';
+import '../services/update_service.dart';
 import 'system_selection_screen.dart';
 import 'import_manage_screen.dart';
 import 'sdr_settings_screen.dart';
@@ -37,6 +39,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   String _version = '...';
+  final _updateService = UpdateService();
+  bool _checkingForUpdates = false;
 
   @override
   void initState() {
@@ -184,6 +188,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 12),
             _buildMenuTile(
               context,
+              title: 'Check for Updates',
+              subtitle: _checkingForUpdates ? 'Checking...' : 'Check for app updates',
+              icon: Icons.system_update,
+              iconColor: Colors.cyan,
+              onTap: () {
+                if (!_checkingForUpdates) {
+                  _checkForUpdates();
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildMenuTile(
+              context,
               title: 'About',
               subtitle: 'App version and information',
               icon: Icons.info_outline,
@@ -233,6 +250,125 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+  
+  Future<void> _checkForUpdates() async {
+    setState(() {
+      _checkingForUpdates = true;
+    });
+    
+    // Clear dismissed version to allow showing again
+    await _updateService.clearDismissed();
+    
+    // Force check
+    final updateInfo = await _updateService.checkForUpdates(force: true);
+    
+    setState(() {
+      _checkingForUpdates = false;
+    });
+    
+    if (mounted) {
+      if (updateInfo != null) {
+        _showUpdateDialog(updateInfo);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('You\'re running the latest version ($_version)'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
+  }
+  
+  void _showUpdateDialog(UpdateInfo updateInfo) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.system_update, color: Colors.cyan),
+            SizedBox(width: 12),
+            Text('Update Available'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Version ${updateInfo.version}',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Released: ${updateInfo.releaseDate}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[500],
+                ),
+              ),
+              if (updateInfo.changelog.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Text(
+                  'What\'s New:',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.cyan[300],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...updateInfo.changelog.map((change) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('• ', style: TextStyle(color: Colors.cyan[300])),
+                      Expanded(
+                        child: Text(
+                          change,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+              ],
+              const SizedBox(height: 16),
+              const Text(
+                'Download the latest version from pocket25.com',
+                style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _updateService.dismissVersion(updateInfo.version);
+              Navigator.of(context).pop();
+            },
+            child: const Text('Later'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.cyan,
+              foregroundColor: Colors.black,
+            ),
+            child: const Text('OK'),
+          ),
+        ],
       ),
     );
   }

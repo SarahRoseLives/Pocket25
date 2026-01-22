@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'screens/scanner_screen.dart';
 import 'screens/log_screen.dart';
 import 'screens/settings_screen.dart';
@@ -13,6 +14,7 @@ import 'screens/scan_grid_screen.dart';
 import 'services/settings_service.dart';
 import 'services/scanning_service.dart';
 import 'services/database_service.dart';
+import 'services/update_service.dart';
 import 'models/scanner_activity.dart';
 import 'models/site_details.dart';
 
@@ -63,6 +65,7 @@ class _MainScreenState extends State<MainScreen> {
   final _dsdFlutterPlugin = DsdFlutter();
   final _settingsService = SettingsService();
   final _db = DatabaseService();
+  final _updateService = UpdateService();
   late final ScanningService _scanningService;
   final List<String> _logLines = [];
   final List<CallEvent> _recentCalls = [];
@@ -96,6 +99,107 @@ class _MainScreenState extends State<MainScreen> {
     _listenToSiteEvents();
     _startCallTimeoutTimer();
     _initializeFilters();
+    _checkForUpdates();
+  }
+  
+  Future<void> _checkForUpdates() async {
+    // Wait a bit before checking (let app fully load)
+    await Future.delayed(const Duration(seconds: 3));
+    
+    final updateInfo = await _updateService.checkForUpdates();
+    if (updateInfo != null && mounted) {
+      _showUpdateDialog(updateInfo);
+    }
+  }
+  
+  void _showUpdateDialog(UpdateInfo updateInfo) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.system_update, color: Colors.cyan),
+            SizedBox(width: 12),
+            Text('Update Available'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Version ${updateInfo.version}',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Released: ${updateInfo.releaseDate}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[500],
+                ),
+              ),
+              if (updateInfo.changelog.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Text(
+                  'What\'s New:',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.cyan[300],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...updateInfo.changelog.map((change) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('• ', style: TextStyle(color: Colors.cyan[300])),
+                      Expanded(
+                        child: Text(
+                          change,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+              ],
+              const SizedBox(height: 16),
+              const Text(
+                'Download the latest version from pocket25.com',
+                style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _updateService.dismissVersion(updateInfo.version);
+              Navigator.of(context).pop();
+            },
+            child: const Text('Later'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.cyan,
+              foregroundColor: Colors.black,
+            ),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
   
   Future<void> _initializeFilters() async {
