@@ -782,13 +782,13 @@ class ScanningService extends ChangeNotifier {
     final now = DateTime.now();
     
     if (_state == ScanningState.locked) {
-      // Check if we've lost lock (no activity for 5 seconds)
+      // Check if we've lost lock (no activity for 10 seconds)
       // Activity is updated by network/patch/GA/AFF events (valid P25 data)
       if (_lastActivityTime != null) {
         final timeSinceActivity = now.difference(_lastActivityTime!);
-        if (timeSinceActivity.inSeconds > 5) {
+        if (timeSinceActivity.inSeconds > 10) {
           if (kDebugMode) {
-            print('Lost lock on ${_currentFrequency} MHz (no data for 5s), trying next channel');
+            print('Lost lock on ${_currentFrequency} MHz (no data for 10s), trying next channel');
           }
           _hasLock = false;
           _currentChannelIndex++;

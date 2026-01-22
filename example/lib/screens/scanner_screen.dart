@@ -28,12 +28,12 @@ class ScannerScreen extends StatelessWidget {
             // Left side - Current call display (main focus)
             Expanded(
               flex: 2,
-              child: _buildCurrentCallPanel(),
+              child: _buildCurrentCallPanel(context),
             ),
             // Right side - Recent calls list
             Expanded(
               flex: 1,
-              child: _buildRecentCallsPanel(),
+              child: _buildRecentCallsPanel(context),
             ),
           ],
         ),
@@ -41,7 +41,35 @@ class ScannerScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildCurrentCallPanel() {
+  // Calculate responsive font size based on screen width
+  // Tablets (>800px) get larger text, phones get base size
+  double _fontSize(BuildContext context, double baseSize) {
+    final width = MediaQuery.of(context).size.width;
+    if (width > 800) {
+      return baseSize * 1.5; // 50% larger on tablets
+    }
+    return baseSize;
+  }
+
+  // Calculate responsive icon size
+  double _iconSize(BuildContext context, double baseSize) {
+    final width = MediaQuery.of(context).size.width;
+    if (width > 800) {
+      return baseSize * 1.5;
+    }
+    return baseSize;
+  }
+
+  // Calculate responsive spacing
+  double _spacing(BuildContext context, double baseSpacing) {
+    final width = MediaQuery.of(context).size.width;
+    if (width > 800) {
+      return baseSpacing * 1.5;
+    }
+    return baseSpacing;
+  }
+
+  Widget _buildCurrentCallPanel(BuildContext context) {
     if (currentCall == null) {
       return Container(
         color: Colors.grey[900],
@@ -54,14 +82,14 @@ class ScannerScreen extends StatelessWidget {
               children: [
                 Icon(
                   isRunning ? Icons.radio : Icons.radio_button_off,
-                  size: 28,
+                  size: _iconSize(context, 28),
                   color: isRunning ? Colors.green : Colors.grey[700],
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: _spacing(context, 10)),
                 Text(
                   isRunning ? 'SCANNING' : 'SCANNER IDLE',
                   style: TextStyle(
-                    fontSize: 22,
+                    fontSize: _fontSize(context, 22),
                     color: isRunning ? Colors.green : Colors.grey[500],
                     fontWeight: FontWeight.bold,
                     letterSpacing: 1.2,
@@ -95,6 +123,7 @@ class ScannerScreen extends StatelessWidget {
                           scanningService.currentSiteName!,
                           scanningService.isCurrentSiteLocked ? Icons.lock : Icons.cell_tower,
                           scanningService.isCurrentSiteLocked ? Colors.orange : Colors.cyan,
+                          context,
                           extraIcon: scanningService.gpsHoppingEnabled ? Icons.my_location : null,
                           extraIconColor: Colors.purple,
                         ),
@@ -109,6 +138,7 @@ class ScannerScreen extends StatelessWidget {
                         '${scanningService.tsbkCount}',
                         Icons.swap_vert,
                         Colors.teal,
+                        context,
                       ),
                     ),
                   ],
@@ -124,6 +154,7 @@ class ScannerScreen extends StatelessWidget {
                 '${scanningService.currentFrequency!.toStringAsFixed(4)} MHz',
                 Icons.settings_input_antenna,
                 Colors.blue,
+                context,
               ),
               if (scanningService.totalChannels > 1) ...[
                 const SizedBox(height: 6),
@@ -132,7 +163,7 @@ class ScannerScreen extends StatelessWidget {
                   child: Text(
                     'Channel ${scanningService.currentChannelIndex + 1} of ${scanningService.totalChannels}',
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: _fontSize(context, 12),
                       color: Colors.grey[600],
                     ),
                   ),
@@ -148,6 +179,7 @@ class ScannerScreen extends StatelessWidget {
                 scanningService.hasLock ? 'LOCKED' : 'SEARCHING',
                 scanningService.hasLock ? Icons.lock : Icons.search,
                 scanningService.hasLock ? Colors.green : Colors.orange,
+                context,
               ),
               const SizedBox(height: 12),
             ],
@@ -179,34 +211,35 @@ class ScannerScreen extends StatelessWidget {
               _buildStatusChip(
                 isRunning ? 'ACTIVE' : 'IDLE',
                 isRunning ? Colors.green : Colors.grey,
+                context,
               ),
               const SizedBox(width: 6),
               if (call.isMuted)
                 Row(
                   children: [
-                    _buildStatusChip('MUTED', Colors.grey[700]!),
+                    _buildStatusChip('MUTED', Colors.grey[700]!, context),
                     const SizedBox(width: 6),
                   ],
                 ),
               if (scanningService.gpsHoppingEnabled)
                 Row(
                   children: [
-                    _buildStatusChip('GPS', Colors.blue),
+                    _buildStatusChip('GPS', Colors.blue, context),
                     const SizedBox(width: 6),
                   ],
                 ),
               if (call.isEmergency)
-                _buildStatusChip('EMERGENCY', Colors.red),
+                _buildStatusChip('EMERGENCY', Colors.red, context),
               if (call.isEncrypted)
                 Padding(
                   padding: const EdgeInsets.only(left: 6),
-                  child: _buildStatusChip('ENC', Colors.orange),
+                  child: _buildStatusChip('ENC', Colors.orange, context),
                 ),
               const Spacer(),
               Text(
                 call.durationDisplay,
-                style: const TextStyle(
-                  fontSize: 16,
+                style: TextStyle(
+                  fontSize: _fontSize(context, 16),
                   color: Colors.white70,
                   fontFamily: 'monospace',
                 ),
@@ -224,20 +257,20 @@ class ScannerScreen extends StatelessWidget {
                   Text(
                     call.callType.toUpperCase(),
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: _fontSize(context, 12),
                       color: Colors.cyan[300],
                       letterSpacing: 2,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  SizedBox(height: _spacing(context, 4)),
                   // Main talkgroup display
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.centerLeft,
                     child: Text(
                       call.talkgroupDisplay,
-                      style: const TextStyle(
-                        fontSize: 48,
+                      style: TextStyle(
+                        fontSize: _fontSize(context, 48),
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
                       ),
@@ -247,7 +280,7 @@ class ScannerScreen extends StatelessWidget {
                     Text(
                       'TG ${call.talkgroup}',
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: _fontSize(context, 14),
                         color: Colors.grey[500],
                       ),
                     ),
@@ -257,19 +290,19 @@ class ScannerScreen extends StatelessWidget {
                     Text(
                       'SOURCE',
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: _fontSize(context, 10),
                         color: Colors.grey[500],
                         letterSpacing: 2,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    SizedBox(height: _spacing(context, 2)),
                     FittedBox(
                       fit: BoxFit.scaleDown,
                       alignment: Alignment.centerLeft,
                       child: Text(
                         call.sourceDisplay,
-                        style: const TextStyle(
-                          fontSize: 24,
+                        style: TextStyle(
+                          fontSize: _fontSize(context, 24),
                           color: Colors.white,
                         ),
                       ),
@@ -278,7 +311,7 @@ class ScannerScreen extends StatelessWidget {
                       Text(
                         'ID ${call.sourceId}',
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: _fontSize(context, 12),
                           color: Colors.grey[500],
                         ),
                       ),
@@ -294,11 +327,11 @@ class ScannerScreen extends StatelessWidget {
             runSpacing: 4,
             children: [
               if (call.nacDisplay.isNotEmpty)
-                _buildInfoChip('NAC', call.nacDisplay),
+                _buildInfoChip('NAC', call.nacDisplay, context),
               if (call.systemName.isNotEmpty)
-                _buildInfoChip('SYS', call.systemName),
+                _buildInfoChip('SYS', call.systemName, context),
               if (call.slot > 0)
-                _buildInfoChip('SLOT', call.slot.toString()),
+                _buildInfoChip('SLOT', call.slot.toString(), context),
             ],
           ),
         ],
@@ -307,7 +340,7 @@ class ScannerScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildRecentCallsPanel() {
+  Widget _buildRecentCallsPanel(BuildContext context) {
     return Container(
       color: Colors.grey[850],
       child: Column(
@@ -318,14 +351,14 @@ class ScannerScreen extends StatelessWidget {
             color: Colors.blueGrey[900],
             child: Row(
               children: [
-                const Icon(Icons.history, size: 16, color: Colors.white70),
-                const SizedBox(width: 6),
-                const Expanded(
+                Icon(Icons.history, size: _iconSize(context, 16), color: Colors.white70),
+                SizedBox(width: _spacing(context, 6)),
+                Expanded(
                   child: Text(
                     'Recent',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
-                      fontSize: 13,
+                      fontSize: _fontSize(context, 13),
                       color: Colors.white70,
                     ),
                     overflow: TextOverflow.ellipsis,
@@ -339,8 +372,8 @@ class ScannerScreen extends StatelessWidget {
                   ),
                   child: Text(
                     isRunning ? 'ON' : 'OFF',
-                    style: const TextStyle(
-                      fontSize: 9,
+                    style: TextStyle(
+                      fontSize: _fontSize(context, 9),
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -353,7 +386,7 @@ class ScannerScreen extends StatelessWidget {
                 ? Center(
                     child: Text(
                       'No recent calls',
-                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                      style: TextStyle(color: Colors.grey[600], fontSize: _fontSize(context, 12)),
                     ),
                   )
                 : ListView.builder(
@@ -361,7 +394,7 @@ class ScannerScreen extends StatelessWidget {
                     itemCount: recentCalls.length,
                     itemBuilder: (context, index) {
                       final call = recentCalls[index];
-                      return _buildRecentCallTile(call);
+                      return _buildRecentCallTile(call, context);
                     },
                   ),
           ),
@@ -370,7 +403,7 @@ class ScannerScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildRecentCallTile(CallEvent call) {
+  Widget _buildRecentCallTile(CallEvent call, BuildContext context) {
     return GestureDetector(
       onLongPress: () {
         if (onToggleMute != null) {
@@ -401,7 +434,7 @@ class ScannerScreen extends StatelessWidget {
                 padding: const EdgeInsets.only(right: 4),
                 child: Icon(
                   Icons.volume_off,
-                  size: 12,
+                  size: _iconSize(context, 12),
                   color: Colors.grey[500],
                 ),
               ),
@@ -414,7 +447,7 @@ class ScannerScreen extends StatelessWidget {
                     call.talkgroupDisplay,
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
-                      fontSize: 12,
+                      fontSize: _fontSize(context, 12),
                       color: call.isMuted ? Colors.grey[500] : Colors.white,
                     ),
                     overflow: TextOverflow.ellipsis,
@@ -423,7 +456,7 @@ class ScannerScreen extends StatelessWidget {
                     Text(
                       call.sourceDisplay,
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: _fontSize(context, 10),
                         color: call.isMuted ? Colors.grey[600] : Colors.grey[400],
                       ),
                       overflow: TextOverflow.ellipsis,
@@ -431,11 +464,11 @@ class ScannerScreen extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 4),
+            SizedBox(width: _spacing(context, 4)),
             Text(
               call.timeDisplay,
               style: TextStyle(
-                fontSize: 9,
+                fontSize: _fontSize(context, 9),
                 color: Colors.grey[500],
               ),
             ),
@@ -445,7 +478,7 @@ class ScannerScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusChip(String label, Color color) {
+  Widget _buildStatusChip(String label, Color color, BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -454,8 +487,8 @@ class ScannerScreen extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: const TextStyle(
-          fontSize: 11,
+        style: TextStyle(
+          fontSize: _fontSize(context, 11),
           fontWeight: FontWeight.bold,
           color: Colors.white,
         ),
@@ -463,22 +496,22 @@ class ScannerScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoRow(String label, String value, IconData icon, Color color) {
+  Widget _buildInfoRow(String label, String value, IconData icon, Color color, BuildContext context) {
     return Row(
       children: [
         Container(
-          padding: const EdgeInsets.all(6),
+          padding: EdgeInsets.all(_spacing(context, 6)),
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Icon(
             icon,
-            size: 20,
+            size: _iconSize(context, 20),
             color: color,
           ),
         ),
-        const SizedBox(width: 10),
+        SizedBox(width: _spacing(context, 10)),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -486,16 +519,16 @@ class ScannerScreen extends StatelessWidget {
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: _fontSize(context, 11),
                   color: Colors.grey[500],
                   letterSpacing: 0.5,
                 ),
               ),
-              const SizedBox(height: 1),
+              SizedBox(height: _spacing(context, 1)),
               Text(
                 value,
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: _fontSize(context, 16),
                   color: Colors.white,
                   fontWeight: FontWeight.w500,
                   fontFamily: 'monospace',
@@ -508,22 +541,22 @@ class ScannerScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoRowWithExtraIcon(String label, String value, IconData icon, Color color, {IconData? extraIcon, Color? extraIconColor}) {
+  Widget _buildInfoRowWithExtraIcon(String label, String value, IconData icon, Color color, BuildContext context, {IconData? extraIcon, Color? extraIconColor}) {
     return Row(
       children: [
         Container(
-          padding: const EdgeInsets.all(6),
+          padding: EdgeInsets.all(_spacing(context, 6)),
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Icon(
             icon,
-            size: 20,
+            size: _iconSize(context, 20),
             color: color,
           ),
         ),
-        const SizedBox(width: 10),
+        SizedBox(width: _spacing(context, 10)),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -531,19 +564,19 @@ class ScannerScreen extends StatelessWidget {
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: _fontSize(context, 11),
                   color: Colors.grey[500],
                   letterSpacing: 0.5,
                 ),
               ),
-              const SizedBox(height: 1),
+              SizedBox(height: _spacing(context, 1)),
               Row(
                 children: [
                   Flexible(
                     child: Text(
                       value,
                       style: TextStyle(
-                        fontSize: 16,
+                        fontSize: _fontSize(context, 16),
                         color: Colors.white,
                         fontWeight: FontWeight.w500,
                         fontFamily: 'monospace',
@@ -551,10 +584,10 @@ class ScannerScreen extends StatelessWidget {
                     ),
                   ),
                   if (extraIcon != null) ...[
-                    const SizedBox(width: 6),
+                    SizedBox(width: _spacing(context, 6)),
                     Icon(
                       extraIcon,
-                      size: 16,
+                      size: _iconSize(context, 16),
                       color: extraIconColor ?? Colors.white,
                     ),
                   ],
@@ -567,7 +600,7 @@ class ScannerScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoChip(String label, String value) {
+  Widget _buildInfoChip(String label, String value, BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -575,15 +608,15 @@ class ScannerScreen extends StatelessWidget {
         Text(
           label,
           style: TextStyle(
-            fontSize: 9,
+            fontSize: _fontSize(context, 9),
             color: Colors.grey[500],
             letterSpacing: 1,
           ),
         ),
         Text(
           value,
-          style: const TextStyle(
-            fontSize: 12,
+          style: TextStyle(
+            fontSize: _fontSize(context, 12),
             color: Colors.white70,
             fontFamily: 'monospace',
           ),
