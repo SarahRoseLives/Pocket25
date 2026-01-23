@@ -347,6 +347,7 @@ class DsdFlutterPlugin :
     private external fun nativeSetRetuneFrozen(frozen: Boolean)
     private external fun nativeRetune(freqHz: Int): Boolean
     private external fun nativeResetP25State()
+    private external fun nativeSetBiasTee(enabled: Boolean): Boolean
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
@@ -652,6 +653,11 @@ class DsdFlutterPlugin :
             "resetP25State" -> {
                 nativeResetP25State()
                 result.success(null)
+            }
+            "setBiasTee" -> {
+                val enabled = call.argument<Boolean>("enabled") ?: false
+                val success = nativeSetBiasTee(enabled)
+                result.success(success)
             }
             else -> {
                 result.notImplemented()

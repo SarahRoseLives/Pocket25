@@ -224,4 +224,8 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
   Future<void> resetP25State() {
     throw UnimplementedError('resetP25State() has not been implemented.');
   }
+  
+  Future<bool> setBiasTee(bool enabled) {
+    throw UnimplementedError('setBiasTee() has not been implemented.');
+  }
 }

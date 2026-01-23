@@ -287,4 +287,10 @@ class DsdFlutter {
   Future<void> resetP25State() {
     return DsdFlutterPlatform.instance.resetP25State();
   }
+  
+  /// Set bias-tee power state on RTL-SDR
+  /// This can be called while the engine is running to toggle bias-tee
+  Future<bool> setBiasTee(bool enabled) {
+    return DsdFlutterPlatform.instance.setBiasTee(enabled);
+  }
 }

@@ -728,14 +728,20 @@ class ScanningService extends ChangeNotifier {
           // Start DSD
           _onStart();
           
+          // Wait for rtl_tcp connection to be established
+          // The engine thread needs time to connect to the rtl_tcp server
+          await Future.delayed(const Duration(milliseconds: 500));
+          
+          // Note: bias-tee is applied during native initialization from opts->rtl_bias_tee
+          // set by the connection string parsing. We don't need to re-apply here.
+          // The native code at rtl_sdr_fm.cpp:2532 handles it.
+          
           // For site switches, explicitly retune to ensure rtl_tcp server changes frequency
           // The connect() only configures DSD's input string, not the rtl_tcp server
           if (freezeRetunes) {
             if (kDebugMode) {
               print('Sending explicit retune command to rtl_tcp server');
             }
-            // Brief delay to let engine initialize
-            await Future.delayed(const Duration(milliseconds: 100));
             await _dsdPlugin.retune(_settingsService.frequencyHz);
             
             // Keep retunes frozen until we lock on the new site

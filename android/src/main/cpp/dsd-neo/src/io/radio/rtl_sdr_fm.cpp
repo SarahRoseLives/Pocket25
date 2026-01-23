@@ -412,10 +412,14 @@ drain_output_on_retune(void) {
    librtlsdr API when available. Returns 0 on success; negative on error. */
 extern "C" int
 dsd_rtl_stream_set_bias_tee(int on) {
+    fprintf(stderr, "dsd_rtl_stream_set_bias_tee called with on=%d, rtl_device_handle=%p\n", on, (void*)rtl_device_handle);
     if (!rtl_device_handle) {
+        fprintf(stderr, "dsd_rtl_stream_set_bias_tee: no device handle!\n");
         return -1;
     }
-    return rtl_device_set_bias_tee(rtl_device_handle, on ? 1 : 0);
+    int result = rtl_device_set_bias_tee(rtl_device_handle, on ? 1 : 0);
+    fprintf(stderr, "dsd_rtl_stream_set_bias_tee: rtl_device_set_bias_tee returned %d\n", result);
+    return result;
 }
 
 /* Export applied tuner gain for UI without exposing internals. */
@@ -2529,8 +2533,14 @@ dsd_rtl_stream_open(dsd_opts* opts) {
     }
 
     /* Apply bias tee setting before other tuner config (USB via librtlsdr; rtl_tcp via protocol cmd 0x0E) */
+    fprintf(stderr, "rtl_sdr_fm init: checking bias-tee, opts=%p, opts->rtl_bias_tee=%d\n", 
+            (void*)opts, opts ? opts->rtl_bias_tee : -1);
     if (opts && opts->rtl_bias_tee) {
+        fprintf(stderr, "rtl_sdr_fm init: enabling bias-tee\n");
         rtl_device_set_bias_tee(rtl_device_handle, 1);
+    } else {
+        fprintf(stderr, "rtl_sdr_fm init: NOT enabling bias-tee (opts=%p, bias_tee=%d)\n",
+                (void*)opts, opts ? opts->rtl_bias_tee : -1);
     }
 
     /* Advanced RTL-SDR driver options via environment */

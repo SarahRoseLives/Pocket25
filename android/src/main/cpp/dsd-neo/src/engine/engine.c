@@ -486,6 +486,7 @@ dsd_engine_setup_io(dsd_opts* opts, dsd_state* state) {
 
         // Optional trailing tokens: bias tee toggle
         while ((curr = dsd_strtok_r(NULL, ":", &saveptr)) != NULL) {
+            LOG_NOTICE("Parsing trailing token: '%s'\n", curr);
             if (strncmp(curr, "bias", 4) == 0 || strncmp(curr, "b", 1) == 0) {
                 const char* val = strchr(curr, '=');
                 int on = 1; // default enable if no explicit value
@@ -496,6 +497,7 @@ dsd_engine_setup_io(dsd_opts* opts, dsd_state* state) {
                         on = 0;
                     }
                 }
+                LOG_NOTICE("Setting rtl_bias_tee = %d from token '%s'\n", on, curr);
                 opts->rtl_bias_tee = on;
             }
         }

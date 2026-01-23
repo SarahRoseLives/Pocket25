@@ -42,11 +42,13 @@ class ScannerScreen extends StatelessWidget {
   }
 
   // Calculate responsive font size based on screen width
-  // Tablets (>800px) get larger text, phones get base size
+  // Large tablets (>1000px) get larger text, smaller tablets get base/slightly larger
   double _fontSize(BuildContext context, double baseSize) {
     final width = MediaQuery.of(context).size.width;
-    if (width > 800) {
-      return baseSize * 1.5; // 50% larger on tablets
+    if (width > 1000) {
+      return baseSize * 1.3; // 30% larger on large tablets
+    } else if (width > 700) {
+      return baseSize * 1.1; // 10% larger on medium tablets
     }
     return baseSize;
   }
@@ -54,8 +56,10 @@ class ScannerScreen extends StatelessWidget {
   // Calculate responsive icon size
   double _iconSize(BuildContext context, double baseSize) {
     final width = MediaQuery.of(context).size.width;
-    if (width > 800) {
-      return baseSize * 1.5;
+    if (width > 1000) {
+      return baseSize * 1.3;
+    } else if (width > 700) {
+      return baseSize * 1.1;
     }
     return baseSize;
   }
@@ -63,8 +67,10 @@ class ScannerScreen extends StatelessWidget {
   // Calculate responsive spacing
   double _spacing(BuildContext context, double baseSpacing) {
     final width = MediaQuery.of(context).size.width;
-    if (width > 800) {
-      return baseSpacing * 1.5;
+    if (width > 1000) {
+      return baseSpacing * 1.3;
+    } else if (width > 700) {
+      return baseSpacing * 1.1;
     }
     return baseSpacing;
   }

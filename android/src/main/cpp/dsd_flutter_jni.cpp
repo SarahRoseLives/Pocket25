@@ -33,6 +33,7 @@ int dsd_rtl_stream_tune(dsd_opts* opts, long int frequency);
 #include <rtl-sdr.h>
 #include <rtl-sdr-android.h>
 #include <dsd-neo/io/rtl_device.h>
+#include <dsd-neo/io/rtl_stream_c.h>
 #endif
 
 // Global context
@@ -2150,5 +2151,34 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeResetP25State(
         LOGI("Reinitializing P25 trunking state machine");
         p25_sm_init(g_opts, g_state);
     }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetBiasTee(
+    JNIEnv* env,
+    jobject thiz,
+    jboolean enabled) {
+    
+    int on = enabled ? 1 : 0;
+    LOGI("Setting bias-tee: %s", on ? "enabled" : "disabled");
+    
+    // Update opts for future connections
+    if (g_opts) {
+        g_opts->rtl_bias_tee = on;
+    }
+    
+    // Apply immediately if engine is running
+    if (g_engine_running) {
+        int result = rtl_stream_set_bias_tee(on);
+        if (result == 0) {
+            LOGI("Bias-tee %s successfully", on ? "enabled" : "disabled");
+            return JNI_TRUE;
+        } else {
+            LOGE("Failed to set bias-tee: %d", result);
+            return JNI_FALSE;
+        }
+    }
+    
+    return JNI_TRUE;
 }
 

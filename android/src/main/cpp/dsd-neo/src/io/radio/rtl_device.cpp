@@ -1700,11 +1700,14 @@ rtl_device_mute(struct rtl_device* dev, int bytes) {
 int
 rtl_device_set_bias_tee(struct rtl_device* dev, int on) {
     if (!dev) {
+        fprintf(stderr, "rtl_device_set_bias_tee: dev is NULL\n");
         return -1;
     }
     dev->bias_tee_on = on ? 1 : 0;
+    fprintf(stderr, "rtl_device_set_bias_tee: setting bias_tee_on=%d, backend=%d\n", dev->bias_tee_on, dev->backend);
     if (dev->backend == 1) {
         /* rtl_tcp protocol command 0x0E toggles bias tee */
+        fprintf(stderr, "rtl_device_set_bias_tee: sending 0x0E command to rtl_tcp with value %d\n", dev->bias_tee_on);
         return rtl_tcp_send_cmd(dev->sockfd, 0x0E, (uint32_t)dev->bias_tee_on);
     }
 #ifdef USE_RTLSDR_BIAS_TEE

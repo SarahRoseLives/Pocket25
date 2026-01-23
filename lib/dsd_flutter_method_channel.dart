@@ -335,4 +335,12 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
   Future<void> resetP25State() async {
     await methodChannel.invokeMethod('resetP25State');
   }
+  
+  @override
+  Future<bool> setBiasTee(bool enabled) async {
+    final result = await methodChannel.invokeMethod<bool>('setBiasTee', {
+      'enabled': enabled,
+    });
+    return result ?? false;
+  }
 }
