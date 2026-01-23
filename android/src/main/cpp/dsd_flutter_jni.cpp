@@ -1158,27 +1158,32 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeConnect(
     jobject thiz,
     jstring host,
     jint port,
-    jlong freq_hz) {
+    jlong freq_hz,
+    jint gain,
+    jint ppm,
+    jint bias_tee) {
     
     const char* host_str = env->GetStringUTFChars(host, nullptr);
     
-    LOGI("Configuring rtl_tcp at %s:%d freq=%lld Hz", host_str, port, (long long)freq_hz);
+    LOGI("Configuring rtl_tcp at %s:%d freq=%lld Hz gain=%d ppm=%d bias_tee=%d", 
+         host_str, port, (long long)freq_hz, gain, ppm, bias_tee);
     
     if (g_opts) {
-        // Set up rtl_tcp input string: rtltcp:host:port:freq:gain:ppm:bw:sql:vol
-        // Format: rtltcp:hostname:port:freq:gain:ppm:bw:sql:vol
+        // Set up rtl_tcp input string: rtltcp:host:port:freq:gain:ppm:bw:sql:vol:bias=1
+        // Format: rtltcp:hostname:port:freq:gain:ppm:bw:sql:vol:b=0/1
         // Squelch 0 = disabled (wide open for digital)
         snprintf(g_opts->audio_in_dev, sizeof(g_opts->audio_in_dev),
-                 "rtltcp:%s:%d:%lld:48:0:48:0:2", 
-                 host_str, port, (long long)freq_hz);
+                 "rtltcp:%s:%d:%lld:%d:%d:48:0:2:b=%d", 
+                 host_str, port, (long long)freq_hz, gain, ppm, bias_tee);
         
         // Also set individual options
         snprintf(g_opts->rtltcp_hostname, sizeof(g_opts->rtltcp_hostname), "%s", host_str);
         g_opts->rtltcp_portno = port;
         g_opts->rtltcp_enabled = 1;
         g_opts->rtlsdr_center_freq = (uint32_t)freq_hz;
-        g_opts->rtl_gain_value = 48;
-        g_opts->rtlsdr_ppm_error = 0;
+        g_opts->rtl_gain_value = gain;
+        g_opts->rtlsdr_ppm_error = ppm;
+        g_opts->rtl_bias_tee = bias_tee;
         g_opts->rtl_dsp_bw_khz = 48;  // Full bandwidth
         g_opts->rtl_squelch_level = 0;  // Disabled - wide open
         g_opts->rtl_volume_multiplier = 2;
@@ -1204,6 +1209,7 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeConnect(
         g_opts->p25_trunk = 1;
         
         LOGI("Configured for rtl_tcp input: %s", g_opts->audio_in_dev);
+        LOGI("Bias-tee setting: %d", g_opts->rtl_bias_tee);
         LOGI("Audio output enabled: %s type=%d slot1=%d slot2=%d", 
              g_opts->audio_out_dev, g_opts->audio_out_type, 
              g_opts->slot1_on, g_opts->slot2_on);
@@ -1582,10 +1588,11 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeOpenRtlSdrUsb(
     jlong frequency,
     jint sampleRate,
     jint gain,
-    jint ppm) {
+    jint ppm,
+    jint bias_tee) {
     
-    LOGI("Configuring native RTL-SDR USB: fd=%d, freq=%lld, rate=%d, gain=%d, ppm=%d",
-         fd, (long long)frequency, sampleRate, gain, ppm);
+    LOGI("Configuring native RTL-SDR USB: fd=%d, freq=%lld, rate=%d, gain=%d, ppm=%d, bias_tee=%d",
+         fd, (long long)frequency, sampleRate, gain, ppm, bias_tee);
     
     if (!g_opts) {
         LOGE("DSD not initialized - call nativeInit first");
@@ -1607,6 +1614,7 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeOpenRtlSdrUsb(
     g_opts->rtlsdr_center_freq = (uint32_t)frequency;
     g_opts->rtl_gain_value = gain;
     g_opts->rtlsdr_ppm_error = ppm;
+    g_opts->rtl_bias_tee = bias_tee;
     g_opts->rtltcp_enabled = 0;  // Not using rtl_tcp
     g_opts->audio_in_type = AUDIO_IN_RTL;
     
@@ -1714,7 +1722,8 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeOpenRtlSdrUsb(
     jlong frequency,
     jint sampleRate,
     jint gain,
-    jint ppm) {
+    jint ppm,
+    jint bias_tee) {
     LOGE("Native RTL-SDR support not compiled");
     return JNI_FALSE;
 }
@@ -2093,8 +2102,8 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeRetune(
     jobject thiz,
     jint freqHz) {
     
-    if (!g_opts) {
-        LOGE("Cannot retune: DSD opts not initialized");
+    if (!g_opts || !g_engine_running) {
+        LOGE("Cannot retune: DSD engine not running");
         return JNI_FALSE;
     }
     

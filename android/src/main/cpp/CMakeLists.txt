@@ -28,6 +28,9 @@ if(ENABLE_NATIVE_RTLSDR)
     
     # Global compile definition so all targets (including dsd-neo) know native rtlsdr is available
     add_compile_definitions(NATIVE_RTLSDR_ENABLED=1)
+    
+    # Enable bias-tee support (librtlsdr-android has rtlsdr_set_bias_tee)
+    add_compile_definitions(USE_RTLSDR_BIAS_TEE=1)
 else()
     # Use stub headers for rtl_tcp-only mode
     set(RTLSDR_FOUND TRUE CACHE BOOL "" FORCE)

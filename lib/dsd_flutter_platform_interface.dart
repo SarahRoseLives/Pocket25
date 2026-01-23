@@ -28,7 +28,7 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('platformVersion() has not been implemented.');
   }
 
-  Future<void> connect(String host, int port, int freqHz) {
+  Future<void> connect(String host, int port, int freqHz, {int gain = 48, int ppm = 0, bool biasTee = false}) {
     throw UnimplementedError('connect() has not been implemented.');
   }
 
@@ -58,6 +58,7 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
     int sampleRate = 2400000,
     int gain = 0,
     int ppm = 0,
+    bool biasTee = false,
   }) {
     throw UnimplementedError('connectNativeUsb() has not been implemented.');
   }

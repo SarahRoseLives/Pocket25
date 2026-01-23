@@ -16,6 +16,7 @@ class SettingsService extends ChangeNotifier {
   int _gain = 48;
   int _ppm = 0;
   int _sampleRate = 1536000;  // 1.536 MSPS - matches DSD rtl_tcp default
+  bool _biasTee = false; // Bias-T enable for RTL-SDR
   
   // Native USB state (RTL-SDR)
   int _nativeUsbFd = -1;
@@ -43,6 +44,7 @@ class SettingsService extends ChangeNotifier {
     _remotePort = prefs.getInt('sdr_remote_port') ?? _remotePort;
     _gain = prefs.getInt('sdr_gain') ?? _gain;
     _ppm = prefs.getInt('sdr_ppm') ?? _ppm;
+    _biasTee = prefs.getBool('sdr_bias_tee') ?? _biasTee;
     _hackrfLnaGain = prefs.getInt('sdr_hackrf_lna_gain') ?? _hackrfLnaGain;
     _hackrfVgaGain = prefs.getInt('sdr_hackrf_vga_gain') ?? _hackrfVgaGain;
     
@@ -60,6 +62,7 @@ class SettingsService extends ChangeNotifier {
     await prefs.setInt('sdr_remote_port', _remotePort);
     await prefs.setInt('sdr_gain', _gain);
     await prefs.setInt('sdr_ppm', _ppm);
+    await prefs.setBool('sdr_bias_tee', _biasTee);
     await prefs.setInt('sdr_hackrf_lna_gain', _hackrfLnaGain);
     await prefs.setInt('sdr_hackrf_vga_gain', _hackrfVgaGain);
     
@@ -76,6 +79,7 @@ class SettingsService extends ChangeNotifier {
   int get gain => _gain;
   int get ppm => _ppm;
   int get sampleRate => _sampleRate;
+  bool get biasTee => _biasTee;
   int get nativeUsbFd => _nativeUsbFd;
   String get nativeUsbPath => _nativeUsbPath;
   bool get hasNativeUsbDevice => _nativeUsbFd >= 0;
@@ -128,6 +132,12 @@ class SettingsService extends ChangeNotifier {
 
   void updatePpm(int value) {
     _ppm = value;
+    _saveSettings();
+    notifyListeners();
+  }
+
+  void updateBiasTee(bool value) {
+    _biasTee = value;
     _saveSettings();
     notifyListeners();
   }

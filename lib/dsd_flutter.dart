@@ -7,8 +7,8 @@ class DsdFlutter {
     return DsdFlutterPlatform.instance.getPlatformVersion();
   }
 
-  Future<void> connect(String host, int port, int freqHz) {
-    return DsdFlutterPlatform.instance.connect(host, port, freqHz);
+  Future<void> connect(String host, int port, int freqHz, {int gain = 48, int ppm = 0, bool biasTee = false}) {
+    return DsdFlutterPlatform.instance.connect(host, port, freqHz, gain: gain, ppm: ppm, biasTee: biasTee);
   }
 
   Future<void> start() {
@@ -39,6 +39,7 @@ class DsdFlutter {
     int sampleRate = 2400000,
     int gain = 0,
     int ppm = 0,
+    bool biasTee = false,
   }) {
     return DsdFlutterPlatform.instance.connectNativeUsb(
       fd: fd,
@@ -47,6 +48,7 @@ class DsdFlutter {
       sampleRate: sampleRate,
       gain: gain,
       ppm: ppm,
+      biasTee: biasTee,
     );
   }
   

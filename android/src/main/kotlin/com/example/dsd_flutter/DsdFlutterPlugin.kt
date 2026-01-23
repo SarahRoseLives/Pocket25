@@ -319,13 +319,13 @@ class DsdFlutterPlugin :
 
     // Native method declarations
     private external fun nativeInit()
-    private external fun nativeConnect(host: String, port: Int, freqHz: Long)
+    private external fun nativeConnect(host: String, port: Int, freqHz: Long, gain: Int, ppm: Int, biasTee: Int)
     private external fun nativeStart()
     private external fun nativeStop()
     private external fun nativeCleanup()
     private external fun nativeSetAudioEnabled(enabled: Boolean)
     private external fun nativeIsRtlSdrSupported(): Boolean
-    private external fun nativeOpenRtlSdrUsb(fd: Int, devicePath: String, frequency: Long, sampleRate: Int, gain: Int, ppm: Int): Boolean
+    private external fun nativeOpenRtlSdrUsb(fd: Int, devicePath: String, frequency: Long, sampleRate: Int, gain: Int, ppm: Int, biasTee: Int): Boolean
     private external fun nativeCloseRtlSdrUsb()
     private external fun nativeSetRtlSdrFrequency(frequency: Long): Boolean
     private external fun nativeSetRtlSdrGain(gain: Int): Boolean
@@ -393,7 +393,10 @@ class DsdFlutterPlugin :
                 val host = call.argument<String>("host") ?: "127.0.0.1"
                 val port = call.argument<Int>("port") ?: 1234
                 val freqHz = call.argument<Number>("freqHz")?.toLong() ?: 771181250L
-                nativeConnect(host, port, freqHz)
+                val gain = call.argument<Int>("gain") ?: 48
+                val ppm = call.argument<Int>("ppm") ?: 0
+                val biasTee = call.argument<Boolean>("biasTee") ?: false
+                nativeConnect(host, port, freqHz, gain, ppm, if (biasTee) 1 else 0)
                 result.success(null)
             }
             "start" -> {
@@ -419,7 +422,8 @@ class DsdFlutterPlugin :
                 val sampleRate = call.argument<Int>("sampleRate") ?: 2400000
                 val gain = call.argument<Int>("gain") ?: 0
                 val ppm = call.argument<Int>("ppm") ?: 0
-                val success = nativeOpenRtlSdrUsb(fd, devicePath, freqHz, sampleRate, gain, ppm)
+                val biasTee = call.argument<Boolean>("biasTee") ?: false
+                val success = nativeOpenRtlSdrUsb(fd, devicePath, freqHz, sampleRate, gain, ppm, if (biasTee) 1 else 0)
                 result.success(success)
             }
             "disconnectNativeUsb" -> {

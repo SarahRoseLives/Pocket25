@@ -526,6 +526,7 @@ class ScanningService extends ChangeNotifier {
             sampleRate: _settingsService.sampleRate,
             gain: _settingsService.gain * 10, // Convert to tenths of dB
             ppm: _settingsService.ppm,
+            biasTee: _settingsService.biasTee,
           );
           
           if (!success) {
@@ -612,6 +613,7 @@ class ScanningService extends ChangeNotifier {
             sampleRate: _settingsService.sampleRate,
             gain: _settingsService.gain * 10,
             ppm: _settingsService.ppm,
+            biasTee: _settingsService.biasTee,
           );
           
           if (!configSuccess) {
@@ -708,6 +710,9 @@ class ScanningService extends ChangeNotifier {
             _settingsService.effectiveHost,
             _settingsService.effectivePort,
             _settingsService.frequencyHz,
+            gain: _settingsService.gain,
+            ppm: _settingsService.ppm,
+            biasTee: _settingsService.biasTee,
           );
           
           _rtlTcpConnected = true;

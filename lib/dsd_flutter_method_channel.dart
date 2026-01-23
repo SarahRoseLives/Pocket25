@@ -50,11 +50,14 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
   }
 
   @override
-  Future<void> connect(String host, int port, int freqHz) async {
+  Future<void> connect(String host, int port, int freqHz, {int gain = 48, int ppm = 0, bool biasTee = false}) async {
     await methodChannel.invokeMethod('connect', {
       'host': host,
       'port': port,
       'freqHz': freqHz,
+      'gain': gain,
+      'ppm': ppm,
+      'biasTee': biasTee,
     });
   }
 
@@ -89,6 +92,7 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
     int sampleRate = 2400000,
     int gain = 0,
     int ppm = 0,
+    bool biasTee = false,
   }) async {
     final result = await methodChannel.invokeMethod<bool>('connectNativeUsb', {
       'fd': fd,
@@ -97,6 +101,7 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
       'sampleRate': sampleRate,
       'gain': gain,
       'ppm': ppm,
+      'biasTee': biasTee,
     });
     return result ?? false;
   }

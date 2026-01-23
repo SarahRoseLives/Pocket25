@@ -27,6 +27,7 @@ class _SdrSettingsScreenState extends State<SdrSettingsScreen> {
   List<RtlSdrUsbDevice> _nativeUsbDevices = [];
   bool _hackrfSupported = false;
   List<Map<String, dynamic>> _hackrfDevices = [];
+  late bool _biasTeeEnabled;
 
   @override
   void initState() {
@@ -35,6 +36,7 @@ class _SdrSettingsScreenState extends State<SdrSettingsScreen> {
     _remotePortController = TextEditingController(text: widget.settings.remotePort.toString());
     _gainController = TextEditingController(text: widget.settings.gain.toString());
     _ppmController = TextEditingController(text: widget.settings.ppm.toString());
+    _biasTeeEnabled = widget.settings.biasTee;
     _checkNativeRtlSdrSupport();
     _checkHackRfSupport();
   }
@@ -297,6 +299,18 @@ class _SdrSettingsScreenState extends State<SdrSettingsScreen> {
                         helperText: 'Frequency correction in PPM',
                       ),
                       keyboardType: TextInputType.number,
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      title: const Text('Bias-T'),
+                      subtitle: const Text('Enable bias tee for external LNA power'),
+                      value: _biasTeeEnabled,
+                      onChanged: (value) {
+                        setState(() {
+                          _biasTeeEnabled = value;
+                        });
+                        widget.settings.updateBiasTee(value);
+                      },
                     ),
                   ],
                 ),
