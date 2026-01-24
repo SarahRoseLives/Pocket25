@@ -259,13 +259,12 @@ class ScanningService extends ChangeNotifier {
           // to clear frequency tables learned from old buffered data
           if (_pendingRetuneUnfreeze) {
             if (kDebugMode) {
-              print('Buffer flush complete - resetting P25 state (keeping retunes frozen for site switch)');
+              print('Buffer flush complete - resetting P25 state and unfreezing retunes');
             }
             _dsdPlugin.resetP25State();
             _pendingRetuneUnfreeze = false;
-            // NOTE: We intentionally do NOT unfreeze retunes here for site switches
-            // Voice grant following would retune to the old site which still has signal
-            // Explicit CC hop retunes bypass the freeze, so scanning still works
+            // Unfreeze retunes now that old data is flushed - voice grants can now work
+            _dsdPlugin.setRetuneFrozen(false);
           }
           _rtlTcpReconnectTime = null;
         }
@@ -275,11 +274,12 @@ class ScanningService extends ChangeNotifier {
       // This clears frequency tables from old site before DSD can use them for grants
       if (_settingsService.rtlSource == RtlSource.nativeUsb && _pendingRetuneUnfreeze && hasSync) {
         if (kDebugMode) {
-          print('Native USB site switch - resetting P25 state (keeping retunes frozen)');
+          print('Native USB site switch - resetting P25 state and unfreezing retunes');
         }
         _dsdPlugin.resetP25State();
         _pendingRetuneUnfreeze = false;
-        // Keep retunes frozen - explicit CC hop retunes bypass the freeze
+        // Unfreeze retunes now that we have sync on new site - voice grants can now work
+        _dsdPlugin.setRetuneFrozen(false);
       }
       
       // Update lock status based on sync
