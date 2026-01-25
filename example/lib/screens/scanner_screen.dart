@@ -49,8 +49,9 @@ class ScannerScreen extends StatelessWidget {
       return baseSize * 1.3; // 30% larger on large tablets
     } else if (width > 700) {
       return baseSize * 1.1; // 10% larger on medium tablets
+    } else {
+      return baseSize * 0.7; // 30% smaller on phones
     }
-    return baseSize;
   }
 
   // Calculate responsive icon size
@@ -60,8 +61,9 @@ class ScannerScreen extends StatelessWidget {
       return baseSize * 1.3;
     } else if (width > 700) {
       return baseSize * 1.1;
+    } else {
+      return baseSize * 0.75; // 25% smaller on phones
     }
-    return baseSize;
   }
 
   // Calculate responsive spacing
@@ -71,8 +73,9 @@ class ScannerScreen extends StatelessWidget {
       return baseSpacing * 1.3;
     } else if (width > 700) {
       return baseSpacing * 1.1;
+    } else {
+      return baseSpacing * 0.5; // 50% smaller on phones
     }
-    return baseSpacing;
   }
 
   Widget _buildCurrentCallPanel(BuildContext context) {
@@ -254,6 +257,9 @@ class ScannerScreen extends StatelessWidget {
   }
   
   Widget _buildActiveCallSection(CallEvent call, BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    final isPhone = width < 900; // Use larger breakpoint for phones
+    
     return GestureDetector(
       onLongPress: () {
         if (onToggleMute != null) {
@@ -264,154 +270,252 @@ class ScannerScreen extends StatelessWidget {
         color: call.isMuted 
             ? Colors.grey[850] 
             : (call.isEmergency ? Colors.red[900] : Colors.grey[900]),
-        padding: EdgeInsets.all(_spacing(context, 16)),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Status chips and duration
-            Row(
-              children: [
-                _buildStatusChip(
-                  'ACTIVE',
-                  Colors.green,
-                  context,
+            // Top bar with timer/badges - only on tablets
+            if (!isPhone)
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: _spacing(context, 16),
+                  vertical: _spacing(context, 10),
                 ),
-                SizedBox(width: _spacing(context, 6)),
-                if (call.isMuted)
-                  Row(
-                    children: [
-                      _buildStatusChip('MUTED', Colors.grey[700]!, context),
-                      SizedBox(width: _spacing(context, 6)),
-                    ],
-                  ),
-                if (scanningService.gpsHoppingEnabled)
-                  Row(
-                    children: [
-                      _buildStatusChip('GPS', Colors.blue, context),
-                      SizedBox(width: _spacing(context, 6)),
-                    ],
-                  ),
-                if (call.isEmergency)
-                  Padding(
-                    padding: EdgeInsets.only(right: _spacing(context, 6)),
-                    child: _buildStatusChip('EMERGENCY', Colors.red, context),
-                  ),
-                if (call.isEncrypted)
-                  _buildStatusChip('ENC', Colors.orange, context),
-                const Spacer(),
-                Text(
-                  call.durationDisplay,
-                  style: TextStyle(
-                    fontSize: _fontSize(context, 16),
-                    color: Colors.white70,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: _spacing(context, 16)),
-            
-            // Main content - flexible
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                color: Colors.black.withValues(alpha: 0.3),
+                child: Row(
                   children: [
-                    // Call type label
-                    Text(
-                      call.callType.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: _fontSize(context, 12),
-                        color: Colors.cyan[300],
-                        letterSpacing: 2,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: _spacing(context, 8)),
-                    
-                    // Main talkgroup display
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        call.talkgroupDisplay,
-                        style: TextStyle(
-                          fontSize: _fontSize(context, 40),
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          height: 1.1,
-                        ),
-                      ),
-                    ),
-                    if (call.groupName.isEmpty && call.talkgroup > 0)
+                    if (call.isMuted)
                       Padding(
-                        padding: EdgeInsets.only(top: _spacing(context, 4)),
-                        child: Text(
-                          'TG ${call.talkgroup}',
-                          style: TextStyle(
-                            fontSize: _fontSize(context, 14),
-                            color: Colors.grey[500],
-                          ),
-                        ),
+                        padding: EdgeInsets.only(right: _spacing(context, 6)),
+                        child: Icon(Icons.volume_off, 
+                          size: _iconSize(context, 18), 
+                          color: Colors.grey[400]),
                       ),
-                    
-                    // Source info
-                    if (call.sourceDisplay.isNotEmpty) ...[
-                      SizedBox(height: _spacing(context, 20)),
-                      Text(
-                        'SOURCE',
-                        style: TextStyle(
-                          fontSize: _fontSize(context, 10),
-                          color: Colors.grey[500],
-                          letterSpacing: 2,
-                          fontWeight: FontWeight.bold,
-                        ),
+                    if (call.isEmergency)
+                      Padding(
+                        padding: EdgeInsets.only(right: _spacing(context, 6)),
+                        child: Icon(Icons.warning, 
+                          size: _iconSize(context, 18), 
+                          color: Colors.red),
                       ),
-                      SizedBox(height: _spacing(context, 6)),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          call.sourceDisplay,
-                          style: TextStyle(
-                            fontSize: _fontSize(context, 28),
-                            color: Colors.white,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
+                    if (call.isEncrypted)
+                      Icon(Icons.lock, 
+                        size: _iconSize(context, 18), 
+                        color: Colors.orange),
+                    const Spacer(),
+                    Text(
+                      call.durationDisplay,
+                      style: TextStyle(
+                        fontSize: _fontSize(context, 18),
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
                       ),
-                      if (call.sourceName.isEmpty && call.sourceId > 0)
-                        Padding(
-                          padding: EdgeInsets.only(top: _spacing(context, 4)),
-                          child: Text(
-                            'ID ${call.sourceId}',
-                            style: TextStyle(
-                              fontSize: _fontSize(context, 12),
-                              color: Colors.grey[500],
-                            ),
-                          ),
-                        ),
-                    ],
+                    ),
                   ],
                 ),
               ),
+            
+            // Main content
+            Expanded(
+              child: isPhone 
+                ? Stack(
+                    children: [
+                      // Phone: Centered with overlaid timer
+                      Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: _spacing(context, 16),
+                            vertical: _spacing(context, 4),
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // Alpha tag (talkgroup name)
+                              if (call.groupName.isNotEmpty)
+                                Text(
+                                  call.groupName,
+                                  style: TextStyle(
+                                    fontSize: _fontSize(context, 28),
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                    height: 1.2,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              
+                              // Talkgroup ID
+                              if (call.talkgroup > 0) ...[
+                                SizedBox(height: _spacing(context, 4)),
+                                Text(
+                                  'TG ${call.talkgroup}',
+                                  style: TextStyle(
+                                    fontSize: _fontSize(context, 16),
+                                    color: Colors.grey[400],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                              
+                              // Source ID
+                              if (call.sourceId > 0) ...[
+                                SizedBox(height: _spacing(context, 14)),
+                                Text(
+                                  'ID ${call.sourceId}',
+                                  style: TextStyle(
+                                    fontSize: _fontSize(context, 20),
+                                    color: Colors.white70,
+                                    fontWeight: FontWeight.w400,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                      
+                      // Phone: Timer in top-right
+                      Positioned(
+                        top: _spacing(context, 12),
+                        right: _spacing(context, 12),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (call.isMuted)
+                              Padding(
+                                padding: EdgeInsets.only(right: _spacing(context, 6)),
+                                child: Icon(Icons.volume_off, 
+                                  size: _iconSize(context, 18), 
+                                  color: Colors.grey[400]),
+                              ),
+                            if (call.isEmergency)
+                              Padding(
+                                padding: EdgeInsets.only(right: _spacing(context, 6)),
+                                child: Icon(Icons.warning, 
+                                  size: _iconSize(context, 18), 
+                                  color: Colors.red),
+                              ),
+                            if (call.isEncrypted)
+                              Padding(
+                                padding: EdgeInsets.only(right: _spacing(context, 6)),
+                                child: Icon(Icons.lock, 
+                                  size: _iconSize(context, 18), 
+                                  color: Colors.orange),
+                              ),
+                            Text(
+                              call.durationDisplay,
+                              style: TextStyle(
+                                fontSize: _fontSize(context, 16),
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  )
+                : Center(
+                    // Tablet: Simple centered layout
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: _spacing(context, 20),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          // Alpha tag (talkgroup name)
+                          if (call.groupName.isNotEmpty)
+                            Text(
+                              call.groupName,
+                              style: TextStyle(
+                                fontSize: _fontSize(context, 28),
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                height: 1.2,
+                              ),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          
+                          // Talkgroup ID
+                          if (call.talkgroup > 0) ...[
+                            SizedBox(height: _spacing(context, 6)),
+                            Text(
+                              'TG ${call.talkgroup}',
+                              style: TextStyle(
+                                fontSize: _fontSize(context, 16),
+                                color: Colors.grey[400],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                          
+                          // Source ID
+                          if (call.sourceId > 0) ...[
+                            SizedBox(height: _spacing(context, 24)),
+                            Text(
+                              'ID ${call.sourceId}',
+                              style: TextStyle(
+                                fontSize: _fontSize(context, 22),
+                                color: Colors.white70,
+                                fontWeight: FontWeight.w400,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
             ),
             
-            // System info chips at bottom
-            SizedBox(height: _spacing(context, 12)),
-            Wrap(
-              spacing: _spacing(context, 12),
-              runSpacing: _spacing(context, 8),
-              children: [
-                if (call.nacDisplay.isNotEmpty)
-                  _buildInfoChip('NAC', call.nacDisplay, context),
-                if (call.systemName.isNotEmpty)
-                  _buildInfoChip('SYS', call.systemName, context),
-                if (call.slot > 0)
-                  _buildInfoChip('SLOT', call.slot.toString(), context),
-              ],
-            ),
+            // Bottom bar with system info
+            if (call.systemName.isNotEmpty || call.slot > 0)
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: _spacing(context, 16),
+                  vertical: _spacing(context, 8),
+                ),
+                color: Colors.black.withValues(alpha: 0.3),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (call.slot > 0) ...[
+                      Text(
+                        'SLOT ${call.slot}',
+                        style: TextStyle(
+                          fontSize: _fontSize(context, 11),
+                          color: Colors.grey[400],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (call.systemName.isNotEmpty)
+                        Padding(
+                          padding: EdgeInsets.symmetric(horizontal: _spacing(context, 8)),
+                          child: Text('•', style: TextStyle(color: Colors.grey[600])),
+                        ),
+                    ],
+                    if (call.systemName.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          call.systemName,
+                          style: TextStyle(
+                            fontSize: _fontSize(context, 11),
+                            color: Colors.grey[400],
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),

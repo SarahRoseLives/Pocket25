@@ -121,17 +121,11 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
     }
   }
   
-  Future<void> _loadNorthAmericanCountries() async {
+  Future<void> _loadAllCountries() async {
     final countries = await _service.getCountryList();
     if (countries != null) {
-      // Filter to only USA and Canada
-      final northAmerica = countries.where((c) {
-        final name = c['countryName']?.toString().toLowerCase() ?? '';
-        return name.contains('united states') || name.contains('canada');
-      }).toList();
-      
       setState(() {
-        _countries = northAmerica;
+        _countries = countries;
         _states = null;
         _counties = null;
         _selectedCountry = null;
@@ -458,7 +452,7 @@ class _RadioReferenceImportScreenState extends State<RadioReferenceImportScreen>
                     const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: _loadNorthAmericanCountries,
+                        onPressed: _loadAllCountries,
                         icon: const Icon(Icons.public),
                         label: const Text('Browse Location'),
                         style: ElevatedButton.styleFrom(
