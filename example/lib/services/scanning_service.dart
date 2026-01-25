@@ -883,6 +883,11 @@ class ScanningService extends ChangeNotifier {
   void clearCurrentSystem() {
     _clearSystemState();
   }
+  
+  /// Set pending retune unfreeze flag (for Quick Scan frequency changes)
+  void setPendingRetuneUnfreeze() {
+    _pendingRetuneUnfreeze = true;
+  }
 
   void _setState(ScanningState newState) {
     _state = newState;

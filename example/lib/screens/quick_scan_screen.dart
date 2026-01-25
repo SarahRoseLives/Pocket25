@@ -44,6 +44,10 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
       setState(() {
         _isRunning = widget.isRunning;
       });
+      // Reset frequency field when scanner stops
+      if (!widget.isRunning) {
+        _freqController.text = widget.settings.frequency.toString();
+      }
     }
   }
 
@@ -87,7 +91,20 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
     }
 
     try {
+      // Stop existing scanner if running
+      if (widget.isRunning) {
+        widget.onStop();
+        // Wait for stop to complete
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+      
       widget.settings.updateFrequency(freq);
+      
+      // Freeze retunes to prevent buffered P25 data from causing retunes to old frequencies
+      await widget.dsdPlugin.setRetuneFrozen(true);
+      
+      // Reset P25 state to clear old frequency tables
+      await widget.dsdPlugin.resetP25State();
       
       // Run SDR initialization in background to avoid blocking UI
       await Future.microtask(() async {
@@ -150,6 +167,9 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
             widget.settings.remoteHost,
             widget.settings.remotePort,
             widget.settings.frequencyHz,
+            gain: widget.settings.gain,
+            ppm: widget.settings.ppm,
+            biasTee: widget.settings.biasTee,
           );
         }
       });
@@ -159,6 +179,16 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
 
       // Start scanning
       widget.onStart();
+      
+      // Wait for connection to be established
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // Explicitly retune to ensure the frequency is set
+      await widget.dsdPlugin.retune(widget.settings.frequencyHz);
+      
+      // Mark that we need to unfreeze retunes once we get lock
+      // The scanning service will detect sync and unfreeze automatically
+      widget.scanningService.setPendingRetuneUnfreeze();
       
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
