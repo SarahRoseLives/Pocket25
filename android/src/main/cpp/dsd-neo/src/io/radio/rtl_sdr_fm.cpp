@@ -2284,7 +2284,7 @@ setup_initial_freq_and_rate(dsd_opts* opts) {
         port = (uint16_t)p;
     }
     if (opts->rtl_gain_value > 0) {
-        dongle.gain = opts->rtl_gain_value * 10;
+        dongle.gain = opts->rtl_gain_value;
     }
 }
 
