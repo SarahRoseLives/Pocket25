@@ -133,13 +133,13 @@ class RadioReferenceService extends ChangeNotifier {
   String _buildSoapEnvelope(String method, Map<String, dynamic> params) {
     final authInfo = params['authInfo'];
     final otherParams = params..remove('authInfo');
-    final paramXml = otherParams.entries.map((e) => '<${e.key}>${e.value}</${e.key}>').join('');
+    final paramXml = otherParams.entries.map((e) => '<${e.key}>${_escapeXml(e.value.toString())}</${e.key}>').join('');
     final authXml = '''<authInfo>
-<appKey>${authInfo['appKey']}</appKey>
-<username>${authInfo['username']}</username>
-<password>${authInfo['password']}</password>
-<version>${authInfo['version']}</version>
-<style>${authInfo['style']}</style>
+<appKey>${_escapeXml(authInfo['appKey'])}</appKey>
+<username>${_escapeXml(authInfo['username'])}</username>
+<password>${_escapeXml(authInfo['password'])}</password>
+<version>${_escapeXml(authInfo['version'])}</version>
+<style>${_escapeXml(authInfo['style'])}</style>
 </authInfo>''';
     return '''<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns1="http://api.radioreference.com/soap2/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/" SOAP-ENV:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -150,6 +150,15 @@ $authXml
 </ns1:$method>
 </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>''';
+  }
+  
+  String _escapeXml(String text) {
+    return text
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;');
   }
 
   Future<Map<String, dynamic>?> _soapRequest(
