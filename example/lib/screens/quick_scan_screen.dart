@@ -100,6 +100,10 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
       
       widget.settings.updateFrequency(freq);
       
+      // Disable trunk following for Quick Scan (non-trunked mode)
+      // This allows DMR and conventional signals to be decoded properly
+      await widget.dsdPlugin.setTrunkFollowing(false);
+      
       // Freeze retunes to prevent buffered P25 data from causing retunes to old frequencies
       await widget.dsdPlugin.setRetuneFrozen(true);
       

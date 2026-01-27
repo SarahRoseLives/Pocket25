@@ -533,6 +533,9 @@ class ScanningService extends ChangeNotifier {
             throw Exception('Failed to configure native RTL-SDR');
           }
           
+          // Enable trunk following for P25 trunked systems
+          await _dsdPlugin.setTrunkFollowing(true);
+          
           // Freeze retunes during initial startup to prevent old buffered data issues
           if (kDebugMode) {
             print('Freezing retunes during native USB startup');
@@ -620,6 +623,9 @@ class ScanningService extends ChangeNotifier {
             throw Exception('Failed to configure native RTL-SDR');
           }
           
+          // Enable trunk following for P25 trunked systems
+          await _dsdPlugin.setTrunkFollowing(true);
+          
           // Start engine with new configuration
           _onStart();
           
@@ -674,6 +680,9 @@ class ScanningService extends ChangeNotifier {
           
           _hackrfStreaming = true;
           
+          // Enable trunk following for P25 trunked systems
+          await _dsdPlugin.setTrunkFollowing(true);
+          
           // Start the DSD engine
           _onStart();
         } else {
@@ -716,6 +725,9 @@ class ScanningService extends ChangeNotifier {
           );
           
           _rtlTcpConnected = true;
+          
+          // Enable trunk following for P25 trunked systems
+          await _dsdPlugin.setTrunkFollowing(true);
           
           if (kDebugMode) {
             if (freezeRetunes) {

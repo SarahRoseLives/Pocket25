@@ -348,6 +348,7 @@ class DsdFlutterPlugin :
     private external fun nativeRetune(freqHz: Int): Boolean
     private external fun nativeResetP25State()
     private external fun nativeSetBiasTee(enabled: Boolean): Boolean
+    private external fun nativeSetTrunkFollowing(enabled: Boolean)
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
@@ -658,6 +659,11 @@ class DsdFlutterPlugin :
                 val enabled = call.argument<Boolean>("enabled") ?: false
                 val success = nativeSetBiasTee(enabled)
                 result.success(success)
+            }
+            "setTrunkFollowing" -> {
+                val enabled = call.argument<Boolean>("enabled") ?: true
+                nativeSetTrunkFollowing(enabled)
+                result.success(null)
             }
             else -> {
                 result.notImplemented()

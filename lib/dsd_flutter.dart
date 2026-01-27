@@ -124,6 +124,13 @@ class DsdFlutter {
     return DsdFlutterPlatform.instance.stopHackRfMode();
   }
   
+  /// Enable or disable trunk following mode
+  /// When enabled (true), DSD will follow trunked system control channels (P25)
+  /// When disabled (false), DSD operates in conventional/non-trunked mode (DMR, conventional P25)
+  Future<void> setTrunkFollowing(bool enabled) {
+    return DsdFlutterPlatform.instance.setTrunkFollowing(enabled);
+  }
+  
   /// Stream of log output strings from DSD
   Stream<String> get outputStream {
     return DsdFlutterPlatform.instance.outputStream;

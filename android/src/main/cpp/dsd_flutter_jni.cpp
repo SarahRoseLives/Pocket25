@@ -1206,8 +1206,8 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeConnect(
         g_opts->slot2_on = 0;
         g_opts->slot_preference = 0;  // Prefer slot 1
         
-        // Enable P25 trunk following for control channel
-        g_opts->p25_trunk = 1;
+        // Disable P25 trunk following by default (enable it when needed via setTrunkFollowing)
+        g_opts->p25_trunk = 0;
         
         LOGI("Configured for rtl_tcp input: %s", g_opts->audio_in_dev);
         LOGI("Bias-tee setting: %d", g_opts->rtl_bias_tee);
@@ -1639,8 +1639,8 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeOpenRtlSdrUsb(
     g_opts->slot2_on = 0;
     g_opts->slot_preference = 0;  // Prefer slot 1
     
-    // Enable P25 trunk following
-    g_opts->p25_trunk = 1;
+    // Disable P25 trunk following by default (enable it when needed via setTrunkFollowing)
+    g_opts->p25_trunk = 0;
     
     env->ReleaseStringUTFChars(devicePath, path);
     
@@ -1971,8 +1971,8 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStartHackRfMode(
     g_opts->slot2_on = 0;
     g_opts->slot_preference = 0;
     
-    // Enable P25 trunk following
-    g_opts->p25_trunk = 1;
+    // Disable P25 trunk following by default (enable it when needed via setTrunkFollowing)
+    g_opts->p25_trunk = 0;
     g_opts->p25_is_tuned = 1;
     
     g_hackrf_mode = true;
@@ -2181,4 +2181,23 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetBiasTee(
     
     return JNI_TRUE;
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetTrunkFollowing(
+    JNIEnv* env,
+    jobject thiz,
+    jboolean enabled) {
+    
+    int on = enabled ? 1 : 0;
+    LOGI("Setting trunk following: %s", on ? "enabled" : "disabled");
+    
+    if (g_opts) {
+        g_opts->p25_trunk = on;
+        g_opts->trunk_enable = on;  // Keep both in sync
+        LOGI("Trunk following %s", on ? "enabled" : "disabled");
+    } else {
+        LOGE("Cannot set trunk following: g_opts is null");
+    }
+}
+
 

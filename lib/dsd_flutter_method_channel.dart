@@ -207,6 +207,13 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
   }
   
   @override
+  Future<void> setTrunkFollowing(bool enabled) async {
+    await methodChannel.invokeMethod('setTrunkFollowing', {
+      'enabled': enabled,
+    });
+  }
+  
+  @override
   Stream<String> get outputStream {
     _outputStream ??= _eventChannel
         .receiveBroadcastStream()

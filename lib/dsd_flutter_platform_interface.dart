@@ -133,6 +133,11 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('stopHackRfMode() has not been implemented.');
   }
   
+  /// Enable or disable trunk following mode
+  Future<void> setTrunkFollowing(bool enabled) {
+    throw UnimplementedError('setTrunkFollowing() has not been implemented.');
+  }
+  
   /// Stream of log output strings from DSD
   Stream<String> get outputStream {
     throw UnimplementedError('outputStream has not been implemented.');
