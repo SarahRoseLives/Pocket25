@@ -29,6 +29,7 @@ class QuickScanScreen extends StatefulWidget {
 class _QuickScanScreenState extends State<QuickScanScreen> {
   late TextEditingController _freqController;
   bool _isRunning = false;
+  bool _enableTrunkFollowing = false;  // Default to conventional/DMR mode
 
   @override
   void initState() {
@@ -100,9 +101,8 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
       
       widget.settings.updateFrequency(freq);
       
-      // Disable trunk following for Quick Scan (non-trunked mode)
-      // This allows DMR and conventional signals to be decoded properly
-      await widget.dsdPlugin.setTrunkFollowing(false);
+      // Set trunk following based on user selection
+      await widget.dsdPlugin.setTrunkFollowing(_enableTrunkFollowing);
       
       // Freeze retunes to prevent buffered P25 data from causing retunes to old frequencies
       await widget.dsdPlugin.setRetuneFrozen(true);
@@ -251,6 +251,24 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
                           prefixIcon: Icon(Icons.radio),
                         ),
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      ),
+                      const SizedBox(height: 16),
+                      CheckboxListTile(
+                        value: _enableTrunkFollowing,
+                        onChanged: (value) {
+                          setState(() {
+                            _enableTrunkFollowing = value ?? false;
+                          });
+                        },
+                        title: const Text('Enable Trunk Following'),
+                        subtitle: Text(
+                          _enableTrunkFollowing 
+                            ? 'Enabled - Follow trunked system control channels'
+                            : 'Disabled - Conventional/DMR mode',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                        ),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
                       ),
                     ],
                   ),

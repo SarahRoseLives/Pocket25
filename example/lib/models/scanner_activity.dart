@@ -98,6 +98,43 @@ class CallEvent {
 
   String get nacDisplay => nac > 0 ? '0x${nac.toRadixString(16).toUpperCase()}' : '';
   
+  /// Get protocol from algorithm name
+  String get protocol {
+    final alg = algName.toUpperCase();
+    if (alg.contains('DMR')) return 'DMR';
+    if (alg.contains('P25')) return 'P25';
+    if (alg.contains('NXDN')) return 'NXDN';
+    if (alg.contains('DSTAR') || alg.contains('D-STAR')) return 'D-STAR';
+    if (alg.contains('YSF')) return 'YSF';
+    return 'Unknown';
+  }
+  
+  /// Get protocol-specific metadata display
+  String get protocolMetadata {
+    final proto = protocol;
+    switch (proto) {
+      case 'DMR':
+        // For DMR, slot is the timeslot (1 or 2)
+        if (slot > 0) {
+          return 'TS$slot';
+        }
+        return 'DMR';
+      case 'P25':
+        if (nac > 0) {
+          return nacDisplay;
+        }
+        return 'P25';
+      default:
+        return proto;
+    }
+  }
+  
+  /// Check if this is a DMR call
+  bool get isDMR => protocol == 'DMR';
+  
+  /// Check if this is a P25 call
+  bool get isP25 => protocol == 'P25';
+  
   String get durationDisplay {
     final now = DateTime.now();
     final diff = now.difference(timestamp);

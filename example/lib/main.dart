@@ -4,13 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'screens/scanner_screen.dart';
 import 'screens/log_screen.dart';
 import 'screens/settings_screen.dart';
-import 'screens/site_details_screen.dart';
 import 'screens/network_screen.dart';
 import 'screens/scan_grid_screen.dart';
+import 'screens/conventional_channels_screen.dart';
 import 'services/settings_service.dart';
 import 'services/scanning_service.dart';
 import 'services/database_service.dart';
@@ -463,9 +462,13 @@ class _MainScreenState extends State<MainScreen> {
           },
         );
       case 3:
-        return SiteDetailsScreen(
-          siteDetails: _currentSiteDetails,
+        return ConventionalChannelsScreen(
           scanningService: _scanningService,
+          settings: _settingsService,
+          dsdPlugin: _dsdFlutterPlugin,
+          isRunning: _isRunning,
+          onStart: _start,
+          onStop: _stop,
         );
       case 4:
         return NetworkScreen(
@@ -525,8 +528,8 @@ class _MainScreenState extends State<MainScreen> {
             label: 'Scan Grid',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.cell_tower),
-            label: 'Site',
+            icon: Icon(Icons.list),
+            label: 'Channels',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.lan),

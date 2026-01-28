@@ -20,6 +20,7 @@ extern "C" {
 #include <dsd-neo/core/init.h>
 #include <dsd-neo/core/opts.h>
 #include <dsd-neo/core/state.h>
+#include <dsd-neo/core/synctype_ids.h>
 #include <dsd-neo/engine/engine.h>
 #include <dsd-neo/runtime/exitflag.h>
 // Forward declare to avoid C++ incompatibility with headers
@@ -700,10 +701,35 @@ static void* poll_thread_func(void* arg) {
     
     while (g_engine_running && g_state) {
         // Check for call state changes
+        // For DMR TDMA: slot 1 uses lasttg/lastsrc, slot 2 uses lasttgR/lastsrcR
         int tg = g_state->lasttg;
         int src = g_state->lastsrc;
+        int tgR = g_state->lasttgR;
+        int srcR = g_state->lastsrcR;
         int nac = g_state->nac;
         int slot = g_state->currentslot;
+        int synctype = g_state->synctype;
+        
+        // For DMR, check both slots and use whichever has activity
+        // Slot numbers appear to be 0-indexed (0=TS1, 1=TS2)
+        // lasttgR/lastsrcR are for timeslot 2 regardless of currentslot value
+        if (DSD_SYNC_IS_DMR(synctype)) {
+            // Prioritize TS2 (R fields) if they have data
+            if (tgR != 0 || srcR != 0) {
+                tg = tgR;
+                src = srcR;
+            }
+            // Otherwise use TS1 if it has data (tg/src already set)
+        }
+        
+        // Debug: Log state values periodically (every 100 iterations to avoid spam)
+        static int debug_counter = 0;
+        if (++debug_counter >= 100) {
+            debug_counter = 0;
+            LOGI("Poll: tg=%d src=%d tgR=%d srcR=%d synctype=%d slot=%d DMR=%d P25=%d",
+                 tg, src, tgR, srcR, synctype, slot, 
+                 DSD_SYNC_IS_DMR(synctype), DSD_SYNC_IS_P25(synctype));
+        }
         
         // Detect call changes
         if (tg != g_last_tg || src != g_last_src) {
@@ -720,6 +746,20 @@ static void* poll_thread_func(void* arg) {
                 bool isEncrypted = false;
                 bool isEmergency = g_state->p25_call_emergency[0] != 0;
                 
+                // Determine protocol from synctype
+                const char* algName = "";
+                if (DSD_SYNC_IS_DMR(synctype)) {
+                    algName = "DMR";
+                } else if (DSD_SYNC_IS_P25(synctype)) {
+                    if (DSD_SYNC_IS_P25P1(synctype)) {
+                        algName = "P25 Phase 1";
+                    } else if (DSD_SYNC_IS_P25P2(synctype)) {
+                        algName = "P25 Phase 2";
+                    } else {
+                        algName = "P25";
+                    }
+                }
+                
                 // Get group/source names from call_string if available
                 const char* groupName = "";
                 const char* sourceName = "";
@@ -729,8 +769,8 @@ static void* poll_thread_func(void* arg) {
                 // Add isFiltered flag to indicate if audio is muted
                 bool isFiltered = !should_hear_talkgroup(tg);
                 
-                LOGI("Call event: type=%d tg=%d src=%d nac=0x%X slot=%d filtered=%d", 
-                     eventType, tg, src, nac, slot, isFiltered);
+                LOGI("Call event: type=%d tg=%d src=%d nac=0x%X slot=%d protocol=%s filtered=%d", 
+                     eventType, tg, src, nac, slot, algName, isFiltered);
                 
                 send_call_event_to_flutter(
                     eventType,
@@ -740,7 +780,7 @@ static void* poll_thread_func(void* arg) {
                     callType,
                     isEncrypted,
                     isEmergency,
-                    "",  // alg name
+                    algName,  // Now includes DMR/P25
                     slot,
                     0.0, // frequency
                     "",  // system name
@@ -755,8 +795,22 @@ static void* poll_thread_func(void* arg) {
                     LOGI("Audio restored after filtered call ended");
                 }
                 
+                // Determine protocol from synctype for call end event
+                const char* algName = "";
+                if (DSD_SYNC_IS_DMR(synctype)) {
+                    algName = "DMR";
+                } else if (DSD_SYNC_IS_P25(synctype)) {
+                    if (DSD_SYNC_IS_P25P1(synctype)) {
+                        algName = "P25 Phase 1";
+                    } else if (DSD_SYNC_IS_P25P2(synctype)) {
+                        algName = "P25 Phase 2";
+                    } else {
+                        algName = "P25";
+                    }
+                }
+                
                 // Call ended
-                LOGI("Call ended: was tg=%d src=%d", g_last_tg, g_last_src);
+                LOGI("Call ended: was tg=%d src=%d protocol=%s", g_last_tg, g_last_src, algName);
                 send_call_event_to_flutter(
                     2,  // call_end
                     g_last_tg,
@@ -765,7 +819,7 @@ static void* poll_thread_func(void* arg) {
                     "Group",
                     false,
                     false,
-                    "",
+                    algName,
                     slot,
                     0.0,
                     "",
@@ -808,15 +862,15 @@ static void* poll_thread_func(void* arg) {
         // Check for signal quality changes (using state fields instead of parsing logs)
         unsigned int tsbk_ok = g_state->p25_p1_fec_ok;
         unsigned int tsbk_err = g_state->p25_p1_fec_err;
-        int synctype = g_state->synctype;
+        // synctype already declared above
         int carrier = g_state->carrier;
         
         // Send signal updates if metrics changed
         if (tsbk_ok != g_last_tsbk_ok || tsbk_err != g_last_tsbk_err || 
             synctype != g_last_synctype || carrier != g_last_carrier) {
             
-            // Check if we have P25 sync (synctype 0 or 1 for P25 P1, 35/36 for P25 P2)
-            bool hasSync = (synctype == 0 || synctype == 1 || synctype == 35 || synctype == 36);
+            // Check if we have sync (DMR or P25)
+            bool hasSync = DSD_SYNC_IS_DMR(synctype) || DSD_SYNC_IS_P25(synctype);
             bool hasCarrier = (carrier != 0);
             
             send_signal_event_to_flutter(

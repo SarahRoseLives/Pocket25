@@ -233,12 +233,25 @@ class ScanningService extends ChangeNotifier {
   
   void _listenToSignal() {
     _signalSubscription = _dsdPlugin.signalEventStream.listen((event) {
-      // Update TSBK counts from DSD state (more reliable than parsing)
-      final tsbkOk = event['tsbkOk'] as int;
-      final tsbkErr = event['tsbkErr'] as int;
-      final hasSync = event['hasSync'] as bool;
+      if (kDebugMode) {
+        print('DEBUG Signal Event: $event');
+      }
       
-      // Update counters
+      // Update TSBK counts from DSD state (more reliable than parsing)
+      final tsbkOk = event['tsbkOk'] as int? ?? 0;
+      final tsbkErr = event['tsbkErr'] as int? ?? 0;
+      final hasSync = event['hasSync'] as bool? ?? false;
+      final syncType = event['syncType'] as String? ?? event['frameType'] as String? ?? '';
+      
+      // Detect protocol from sync type or frame type
+      final isDMR = syncType.contains('DMR') || syncType.contains('+DMR');
+      final isP25 = syncType.contains('P25') || syncType.contains('+P25');
+      
+      if (kDebugMode && hasSync) {
+        print('Sync detected: $syncType (DMR: $isDMR, P25: $isP25)');
+      }
+      
+      // Update counters (P25-specific but no harm keeping them)
       if (tsbkOk > _tsbkCount) {
         _tsbkCount = tsbkOk;
         _lastTsbkTime = DateTime.now();
@@ -255,13 +268,17 @@ class ScanningService extends ChangeNotifier {
           }
           return; // Skip lock processing during flush period
         } else {
-          // Flush period complete - reset P25 state if this was a site switch
+          // Flush period complete - reset protocol state if this was a site switch
           // to clear frequency tables learned from old buffered data
           if (_pendingRetuneUnfreeze) {
             if (kDebugMode) {
-              print('Buffer flush complete - resetting P25 state and unfreezing retunes');
+              print('Buffer flush complete - resetting protocol state and unfreezing retunes');
             }
-            _dsdPlugin.resetP25State();
+            // Reset P25 state for P25 systems
+            if (isP25) {
+              _dsdPlugin.resetP25State();
+            }
+            // TODO: Add resetDmrState() when available in plugin
             _pendingRetuneUnfreeze = false;
             // Unfreeze retunes now that old data is flushed - voice grants can now work
             _dsdPlugin.setRetuneFrozen(false);
@@ -270,19 +287,23 @@ class ScanningService extends ChangeNotifier {
         }
       }
       
-      // For native USB site switches: reset P25 state when we first get sync
+      // For native USB site switches: reset protocol state when we first get sync
       // This clears frequency tables from old site before DSD can use them for grants
       if (_settingsService.rtlSource == RtlSource.nativeUsb && _pendingRetuneUnfreeze && hasSync) {
         if (kDebugMode) {
-          print('Native USB site switch - resetting P25 state and unfreezing retunes');
+          print('Native USB site switch - resetting protocol state and unfreezing retunes');
         }
-        _dsdPlugin.resetP25State();
+        // Reset P25 state for P25 systems
+        if (isP25) {
+          _dsdPlugin.resetP25State();
+        }
+        // TODO: Add resetDmrState() when available in plugin
         _pendingRetuneUnfreeze = false;
         // Unfreeze retunes now that we have sync on new site - voice grants can now work
         _dsdPlugin.setRetuneFrozen(false);
       }
       
-      // Update lock status based on sync
+      // Update lock status based on sync (works for both P25 and DMR)
       if (hasSync) {
         _hasLock = true;
         _lastActivityTime = DateTime.now();
@@ -290,7 +311,8 @@ class ScanningService extends ChangeNotifier {
         if (_state == ScanningState.searching) {
           _setState(ScanningState.locked);
           if (kDebugMode) {
-            print('Control channel LOCKED at $_currentFrequency MHz');
+            final protocol = isDMR ? 'DMR' : (isP25 ? 'P25' : 'Unknown');
+            print('$protocol Control channel LOCKED at $_currentFrequency MHz');
           }
         }
       }

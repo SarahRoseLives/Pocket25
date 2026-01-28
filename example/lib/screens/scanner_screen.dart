@@ -17,6 +17,24 @@ class ScannerScreen extends StatelessWidget {
     required this.scanningService,
     this.onToggleMute,
   });
+  
+  /// Get color for protocol badge
+  Color _getProtocolColor(String protocol) {
+    switch (protocol) {
+      case 'P25':
+        return Colors.cyan.withOpacity(0.7);
+      case 'DMR':
+        return Colors.blue.withOpacity(0.7);
+      case 'NXDN':
+        return Colors.purple.withOpacity(0.7);
+      case 'D-STAR':
+        return Colors.orange.withOpacity(0.7);
+      case 'YSF':
+        return Colors.teal.withOpacity(0.7);
+      default:
+        return Colors.grey.withOpacity(0.7);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -282,6 +300,47 @@ class ScannerScreen extends StatelessWidget {
                 color: Colors.black.withValues(alpha: 0.3),
                 child: Row(
                   children: [
+                    // Protocol badge
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: _spacing(context, 8),
+                        vertical: _spacing(context, 4),
+                      ),
+                      decoration: BoxDecoration(
+                        color: _getProtocolColor(call.protocol),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        call.protocol,
+                        style: TextStyle(
+                          fontSize: _fontSize(context, 11),
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: _spacing(context, 8)),
+                    // Protocol metadata (TS# for DMR, NAC for P25)
+                    if (call.protocolMetadata.isNotEmpty)
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: _spacing(context, 8),
+                          vertical: _spacing(context, 4),
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[800],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          call.protocolMetadata,
+                          style: TextStyle(
+                            fontSize: _fontSize(context, 11),
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ),
+                    SizedBox(width: _spacing(context, 8)),
                     if (call.isMuted)
                       Padding(
                         padding: EdgeInsets.only(right: _spacing(context, 6)),

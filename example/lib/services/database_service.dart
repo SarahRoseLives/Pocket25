@@ -26,7 +26,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE systems (
@@ -86,6 +86,73 @@ class DatabaseService {
         await db.execute('''
           CREATE INDEX idx_talkgroups_filter ON talkgroups(filter_status)
         ''');
+        
+        // Conventional channels tables
+        await db.execute('''
+          CREATE TABLE conventional_channels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_name TEXT NOT NULL,
+            frequency REAL NOT NULL,
+            modulation TEXT DEFAULT 'P25',
+            bandwidth TEXT DEFAULT '12.5kHz',
+            nac TEXT,
+            color_code INTEGER,
+            tone_squelch TEXT,
+            notes TEXT,
+            favorite INTEGER DEFAULT 0,
+            sort_order INTEGER DEFAULT 0,
+            created_at INTEGER,
+            last_used_at INTEGER
+          )
+        ''');
+        
+        await db.execute('''
+          CREATE TABLE conventional_banks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bank_name TEXT NOT NULL,
+            description TEXT,
+            enabled INTEGER DEFAULT 1,
+            sort_order INTEGER DEFAULT 0
+          )
+        ''');
+        
+        await db.execute('''
+          CREATE TABLE channel_bank_mapping (
+            channel_id INTEGER NOT NULL,
+            bank_id INTEGER NOT NULL,
+            FOREIGN KEY (channel_id) REFERENCES conventional_channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (bank_id) REFERENCES conventional_banks(id) ON DELETE CASCADE,
+            PRIMARY KEY (channel_id, bank_id)
+          )
+        ''');
+        
+        await db.execute('''
+          CREATE INDEX idx_channels_frequency ON conventional_channels(frequency)
+        ''');
+        
+        await db.execute('''
+          CREATE INDEX idx_channels_favorite ON conventional_channels(favorite)
+        ''');
+        
+        await db.execute('''
+          CREATE INDEX idx_banks_enabled ON conventional_banks(enabled)
+        ''');
+        
+        await db.execute('''
+          CREATE INDEX idx_mapping_channel ON channel_bank_mapping(channel_id)
+        ''');
+        
+        await db.execute('''
+          CREATE INDEX idx_mapping_bank ON channel_bank_mapping(bank_id)
+        ''');
+        
+        // Create default "Favorites" bank
+        await db.insert('conventional_banks', {
+          'bank_name': 'Favorites',
+          'description': 'Favorite channels',
+          'enabled': 1,
+          'sort_order': 0,
+        });
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -108,6 +175,74 @@ class DatabaseService {
           await db.execute('''
             CREATE INDEX IF NOT EXISTS idx_talkgroups_category ON talkgroups(tg_category)
           ''');
+        }
+        if (oldVersion < 4) {
+          // Add conventional channels tables
+          await db.execute('''
+            CREATE TABLE conventional_channels (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              channel_name TEXT NOT NULL,
+              frequency REAL NOT NULL,
+              modulation TEXT DEFAULT 'P25',
+              bandwidth TEXT DEFAULT '12.5kHz',
+              nac TEXT,
+              color_code INTEGER,
+              tone_squelch TEXT,
+              notes TEXT,
+              favorite INTEGER DEFAULT 0,
+              sort_order INTEGER DEFAULT 0,
+              created_at INTEGER,
+              last_used_at INTEGER
+            )
+          ''');
+          
+          await db.execute('''
+            CREATE TABLE conventional_banks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              bank_name TEXT NOT NULL,
+              description TEXT,
+              enabled INTEGER DEFAULT 1,
+              sort_order INTEGER DEFAULT 0
+            )
+          ''');
+          
+          await db.execute('''
+            CREATE TABLE channel_bank_mapping (
+              channel_id INTEGER NOT NULL,
+              bank_id INTEGER NOT NULL,
+              FOREIGN KEY (channel_id) REFERENCES conventional_channels(id) ON DELETE CASCADE,
+              FOREIGN KEY (bank_id) REFERENCES conventional_banks(id) ON DELETE CASCADE,
+              PRIMARY KEY (channel_id, bank_id)
+            )
+          ''');
+          
+          await db.execute('''
+            CREATE INDEX idx_channels_frequency ON conventional_channels(frequency)
+          ''');
+          
+          await db.execute('''
+            CREATE INDEX idx_channels_favorite ON conventional_channels(favorite)
+          ''');
+          
+          await db.execute('''
+            CREATE INDEX idx_banks_enabled ON conventional_banks(enabled)
+          ''');
+          
+          await db.execute('''
+            CREATE INDEX idx_mapping_channel ON channel_bank_mapping(channel_id)
+          ''');
+          
+          await db.execute('''
+            CREATE INDEX idx_mapping_bank ON channel_bank_mapping(bank_id)
+          ''');
+          
+          // Create default "Favorites" bank
+          await db.insert('conventional_banks', {
+            'bank_name': 'Favorites',
+            'description': 'Favorite channels',
+            'enabled': 1,
+            'sort_order': 0,
+          });
         }
       },
     );
@@ -360,5 +495,260 @@ class DatabaseService {
       whereArgs: [systemId, category],
       orderBy: 'tg_decimal',
     );
+  }
+  
+  // ============================================================================
+  // Conventional Channels Methods
+  // ============================================================================
+  
+  /// Insert a new conventional channel
+  Future<int> insertConventionalChannel(Map<String, dynamic> channel) async {
+    final db = await database;
+    return await db.insert('conventional_channels', channel);
+  }
+  
+  /// Update an existing conventional channel
+  Future<void> updateConventionalChannel(int channelId, Map<String, dynamic> channel) async {
+    final db = await database;
+    await db.update(
+      'conventional_channels',
+      channel,
+      where: 'id = ?',
+      whereArgs: [channelId],
+    );
+  }
+  
+  /// Delete a conventional channel
+  Future<void> deleteConventionalChannel(int channelId) async {
+    final db = await database;
+    await db.delete('conventional_channels', where: 'id = ?', whereArgs: [channelId]);
+  }
+  
+  /// Get a single conventional channel by ID
+  Future<Map<String, dynamic>?> getConventionalChannel(int channelId) async {
+    final db = await database;
+    final results = await db.query(
+      'conventional_channels',
+      where: 'id = ?',
+      whereArgs: [channelId],
+      limit: 1,
+    );
+    return results.isNotEmpty ? results.first : null;
+  }
+  
+  /// Get all conventional channels
+  Future<List<Map<String, dynamic>>> getAllConventionalChannels() async {
+    final db = await database;
+    return await db.query('conventional_channels', orderBy: 'sort_order, channel_name');
+  }
+  
+  /// Get favorite conventional channels
+  Future<List<Map<String, dynamic>>> getFavoriteConventionalChannels() async {
+    final db = await database;
+    return await db.query(
+      'conventional_channels',
+      where: 'favorite = ?',
+      whereArgs: [1],
+      orderBy: 'sort_order, channel_name',
+    );
+  }
+  
+  /// Get conventional channels by bank
+  Future<List<Map<String, dynamic>>> getConventionalChannelsByBank(int bankId) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT c.* FROM conventional_channels c
+      INNER JOIN channel_bank_mapping m ON c.id = m.channel_id
+      WHERE m.bank_id = ?
+      ORDER BY c.sort_order, c.channel_name
+    ''', [bankId]);
+  }
+  
+  /// Search conventional channels by name or frequency
+  Future<List<Map<String, dynamic>>> searchConventionalChannels(String query) async {
+    final db = await database;
+    final searchTerm = '%$query%';
+    return await db.query(
+      'conventional_channels',
+      where: 'channel_name LIKE ? OR CAST(frequency AS TEXT) LIKE ? OR notes LIKE ?',
+      whereArgs: [searchTerm, searchTerm, searchTerm],
+      orderBy: 'channel_name',
+    );
+  }
+  
+  /// Update last used timestamp for a channel
+  Future<void> updateChannelLastUsed(int channelId) async {
+    final db = await database;
+    await db.update(
+      'conventional_channels',
+      {'last_used_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'id = ?',
+      whereArgs: [channelId],
+    );
+  }
+  
+  /// Toggle favorite status for a channel
+  Future<void> toggleChannelFavorite(int channelId) async {
+    final db = await database;
+    final channel = await getConventionalChannel(channelId);
+    if (channel != null) {
+      final isFavorite = (channel['favorite'] as int? ?? 0) == 1;
+      await db.update(
+        'conventional_channels',
+        {'favorite': isFavorite ? 0 : 1},
+        where: 'id = ?',
+        whereArgs: [channelId],
+      );
+    }
+  }
+  
+  // ============================================================================
+  // Conventional Banks Methods
+  // ============================================================================
+  
+  /// Insert a new conventional bank
+  Future<int> insertConventionalBank(Map<String, dynamic> bank) async {
+    final db = await database;
+    return await db.insert('conventional_banks', bank);
+  }
+  
+  /// Update an existing conventional bank
+  Future<void> updateConventionalBank(int bankId, Map<String, dynamic> bank) async {
+    final db = await database;
+    await db.update(
+      'conventional_banks',
+      bank,
+      where: 'id = ?',
+      whereArgs: [bankId],
+    );
+  }
+  
+  /// Delete a conventional bank
+  Future<void> deleteConventionalBank(int bankId) async {
+    final db = await database;
+    await db.delete('conventional_banks', where: 'id = ?', whereArgs: [bankId]);
+  }
+  
+  /// Get a single conventional bank by ID
+  Future<Map<String, dynamic>?> getConventionalBank(int bankId) async {
+    final db = await database;
+    final results = await db.query(
+      'conventional_banks',
+      where: 'id = ?',
+      whereArgs: [bankId],
+      limit: 1,
+    );
+    return results.isNotEmpty ? results.first : null;
+  }
+  
+  /// Get all conventional banks
+  Future<List<Map<String, dynamic>>> getAllConventionalBanks() async {
+    final db = await database;
+    return await db.query('conventional_banks', orderBy: 'sort_order, bank_name');
+  }
+  
+  /// Get enabled conventional banks
+  Future<List<Map<String, dynamic>>> getEnabledConventionalBanks() async {
+    final db = await database;
+    return await db.query(
+      'conventional_banks',
+      where: 'enabled = ?',
+      whereArgs: [1],
+      orderBy: 'sort_order, bank_name',
+    );
+  }
+  
+  /// Toggle bank enabled status
+  Future<void> toggleBankEnabled(int bankId) async {
+    final db = await database;
+    final bank = await getConventionalBank(bankId);
+    if (bank != null) {
+      final isEnabled = (bank['enabled'] as int? ?? 1) == 1;
+      await db.update(
+        'conventional_banks',
+        {'enabled': isEnabled ? 0 : 1},
+        where: 'id = ?',
+        whereArgs: [bankId],
+      );
+    }
+  }
+  
+  // ============================================================================
+  // Channel-Bank Mapping Methods
+  // ============================================================================
+  
+  /// Add a channel to a bank
+  Future<void> addChannelToBank(int channelId, int bankId) async {
+    final db = await database;
+    await db.insert(
+      'channel_bank_mapping',
+      {'channel_id': channelId, 'bank_id': bankId},
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+  
+  /// Remove a channel from a bank
+  Future<void> removeChannelFromBank(int channelId, int bankId) async {
+    final db = await database;
+    await db.delete(
+      'channel_bank_mapping',
+      where: 'channel_id = ? AND bank_id = ?',
+      whereArgs: [channelId, bankId],
+    );
+  }
+  
+  /// Get all bank IDs for a channel
+  Future<List<int>> getBankIdsForChannel(int channelId) async {
+    final db = await database;
+    final results = await db.query(
+      'channel_bank_mapping',
+      columns: ['bank_id'],
+      where: 'channel_id = ?',
+      whereArgs: [channelId],
+    );
+    return results.map((row) => row['bank_id'] as int).toList();
+  }
+  
+  /// Get channel count for a bank
+  Future<int> getChannelCountForBank(int bankId) async {
+    final db = await database;
+    final results = await db.rawQuery('''
+      SELECT COUNT(*) as count FROM channel_bank_mapping
+      WHERE bank_id = ?
+    ''', [bankId]);
+    return Sqflite.firstIntValue(results) ?? 0;
+  }
+  
+  /// Set banks for a channel (replaces existing mappings)
+  Future<void> setChannelBanks(int channelId, List<int> bankIds) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      // Remove existing mappings
+      await txn.delete(
+        'channel_bank_mapping',
+        where: 'channel_id = ?',
+        whereArgs: [channelId],
+      );
+      // Add new mappings
+      for (final bankId in bankIds) {
+        await txn.insert(
+          'channel_bank_mapping',
+          {'channel_id': channelId, 'bank_id': bankId},
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    });
+  }
+  
+  /// Get all channels for enabled banks
+  Future<List<Map<String, dynamic>>> getChannelsForEnabledBanks() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT DISTINCT c.* FROM conventional_channels c
+      INNER JOIN channel_bank_mapping m ON c.id = m.channel_id
+      INNER JOIN conventional_banks b ON m.bank_id = b.id
+      WHERE b.enabled = 1
+      ORDER BY c.sort_order, c.channel_name
+    ''');
   }
 }
