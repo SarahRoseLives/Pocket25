@@ -55,7 +55,16 @@ class MainActivity : FlutterActivity() {
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                         device?.let {
                             Log.i(TAG, "USB permission granted for ${it.deviceName}")
-                            openUsbDeviceWithPermission(it)
+                            if (openUsbDeviceWithPermission(it)) {
+                                usbPermissionResult?.success(mapOf(
+                                    "fd" to (currentConnection?.fileDescriptor ?: -1),
+                                    "devicePath" to it.deviceName
+                                ))
+                            } else {
+                                usbPermissionResult?.error("OPEN_FAILED", "Could not open RTL-SDR. Another app may still be using the dongle.", null)
+                            }
+                            usbPermissionResult = null
+                            pendingUsbDevice = null
                         }
                     } else {
                         Log.e(TAG, "USB permission denied")
@@ -180,9 +189,10 @@ class MainActivity : FlutterActivity() {
                     "deviceName" to device.deviceName,
                     "vendorId" to device.vendorId,
                     "productId" to device.productId,
-                    "productName" to (device.productName ?: "RTL-SDR"),
-                    "manufacturerName" to (device.manufacturerName ?: "Unknown"),
-                    "hasPermission" to usbManager.hasPermission(device)
+                    "hasPermission" to usbManager.hasPermission(device),
+                    // Android can reject product/manufacturer reads until this app has USB access.
+                    "productName" to (if (usbManager.hasPermission(device)) device.productName ?: "RTL-SDR" else "RTL-SDR"),
+                    "manufacturerName" to (if (usbManager.hasPermission(device)) device.manufacturerName ?: "Unknown" else "Unknown")
                 ))
             }
         }
@@ -211,11 +221,14 @@ class MainActivity : FlutterActivity() {
         }
         
         if (usbManager.hasPermission(device)) {
-            openUsbDeviceWithPermission(device)
-            result.success(mapOf(
-                "fd" to (currentConnection?.fileDescriptor ?: -1),
-                "devicePath" to device.deviceName
-            ))
+            if (openUsbDeviceWithPermission(device)) {
+                result.success(mapOf(
+                    "fd" to (currentConnection?.fileDescriptor ?: -1),
+                    "devicePath" to device.deviceName
+                ))
+            } else {
+                result.error("OPEN_FAILED", "Could not open RTL-SDR. Another app may still be using the dongle.", null)
+            }
         } else {
             // Request permission
             pendingUsbDevice = device
@@ -259,8 +272,7 @@ class MainActivity : FlutterActivity() {
     }
     
     private fun closeCurrentDevice() {
-        // Don't close USB connection - native code (librtlsdr/DSD) owns the FD
-        // Just stop DSD process and it will clean up the device
+        try { currentConnection?.close() } catch (e: Exception) { Log.w(TAG, "Error closing USB connection: ${e.message}") }
         currentConnection = null
         fdPassedToNative = false
     }
