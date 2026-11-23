@@ -60,6 +60,8 @@ class MainActivity : FlutterActivity() {
                         device?.let {
                             Log.i(TAG, "USB permission granted for ${it.deviceName}")
                             if (openUsbDeviceWithPermission(it)) {
+                                // The fd goes to Flutter, which hands it to the native radio code.
+                                if (usbPermissionResult != null) fdPassedToNative = true
                                 usbPermissionResult?.success(mapOf(
                                     "fd" to (currentConnection?.fileDescriptor ?: -1),
                                     "devicePath" to it.deviceName
@@ -293,6 +295,8 @@ class MainActivity : FlutterActivity() {
         
         if (usbManager.hasPermission(device)) {
             if (openUsbDeviceWithPermission(device)) {
+                // The fd goes to Flutter, which hands it to the native radio code.
+                fdPassedToNative = true
                 result.success(mapOf(
                     "fd" to (currentConnection?.fileDescriptor ?: -1),
                     "devicePath" to device.deviceName
@@ -318,7 +322,7 @@ class MainActivity : FlutterActivity() {
         }
     }
     
-    private fun openUsbDeviceWithPermission(device: UsbDevice) {
+    private fun openUsbDeviceWithPermission(device: UsbDevice): Boolean {
         val usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
         
         closeCurrentDevice()
@@ -326,24 +330,23 @@ class MainActivity : FlutterActivity() {
         currentConnection = usbManager.openDevice(device)
         if (currentConnection != null) {
             Log.i(TAG, "Opened USB device: ${device.deviceName}, fd=${currentConnection?.fileDescriptor}")
-            
-            // If this was a permission callback, send success
-            usbPermissionResult?.success(mapOf(
-                "fd" to (currentConnection?.fileDescriptor ?: -1),
-                "devicePath" to device.deviceName
-            ))
-            usbPermissionResult = null
-            pendingUsbDevice = null
-        } else {
-            Log.e(TAG, "Failed to open USB device")
-            usbPermissionResult?.error("OPEN_FAILED", "Failed to open USB device", null)
-            usbPermissionResult = null
-            pendingUsbDevice = null
+            return true
         }
+        Log.e(TAG, "Failed to open USB device")
+        return false
     }
     
     private fun closeCurrentDevice() {
-        try { currentConnection?.close() } catch (e: Exception) { Log.w(TAG, "Error closing USB connection: ${e.message}") }
+        // Once the fd has been handed to the native radio code, librtlsdr/libusb owns it
+        // and closes it with close(fd) when the engine stops. Closing it here as well
+        // would close the same fd number twice, and by then Android may have reused that
+        // number for something else (a file, socket or audio stream). So only close
+        // connections the native code never took over.
+        if (fdPassedToNative) {
+            Log.i(TAG, "USB fd was handed to native code; native code closes it, not closing here")
+        } else {
+            try { currentConnection?.close() } catch (e: Exception) { Log.w(TAG, "Error closing USB connection: ${e.message}") }
+        }
         currentConnection = null
         fdPassedToNative = false
     }
