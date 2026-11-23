@@ -106,6 +106,15 @@ class ScanningService extends ChangeNotifier {
   int? _lastSystemId;
   String? get lastSiteName => _lastSiteName;
   bool get canResumeLastSite => _lastSiteId != null && _lastSiteName != null;
+  // Incremented each time a new system scan session starts (user start, Resume,
+  // site change). Internal control-channel cycling does NOT change it.
+  int _sessionCounter = 0;
+  int get sessionCounter => _sessionCounter;
+  /// Control channel frequencies (MHz) of the current site, in priority order.
+  List<double> get controlChannelFrequencies => _controlChannels
+      .map((c) => (c['frequency'] as num?)?.toDouble())
+      .whereType<double>()
+      .toList();
   /// True while a trunked system scan is active (searching or locked).
   bool get isSystemScanActive =>
       _state == ScanningState.searching || _state == ScanningState.locked;
@@ -535,6 +544,7 @@ class ScanningService extends ChangeNotifier {
     if (_state != ScanningState.idle) {
       await stopScanning();
     }
+    _sessionCounter++;
 
     // Make sure the selected radio is plugged in before starting.
     _deviceError = await _checkRadioPresent();

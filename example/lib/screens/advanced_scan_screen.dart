@@ -5,6 +5,9 @@ import '../services/scanning_service.dart';
 import '../services/native_rtlsdr_service.dart';
 
 class AdvancedScanScreen extends StatefulWidget {
+  /// Command of the most recent Advanced Scan start (for the log's session header).
+  static String? lastStartedCommand;
+
   final SettingsService settings;
   final DsdFlutter dsdPlugin;
   final ScanningService scanningService;
@@ -130,6 +133,7 @@ class _AdvancedScanScreenState extends State<AdvancedScanScreen> {
     try {
       // Set custom command args - this will be parsed by DSD on start
       // Per-site modulation doesn't apply here; a -ma/-mc/-mq/-mg token in the command overrides Auto
+      AdvancedScanScreen.lastStartedCommand = command;
       await widget.dsdPlugin.setModulation(0);
       await widget.dsdPlugin.setCustomArgs(command);
       

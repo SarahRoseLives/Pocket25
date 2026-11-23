@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'screens/scanner_screen.dart';
@@ -10,6 +11,7 @@ import 'screens/settings_screen.dart';
 import 'screens/network_screen.dart';
 import 'screens/scan_grid_screen.dart';
 import 'screens/conventional_channels_screen.dart';
+import 'screens/advanced_scan_screen.dart';
 import 'services/settings_service.dart';
 import 'services/scanning_service.dart';
 import 'services/database_service.dart';
@@ -102,14 +104,14 @@ class _MainScreenState extends State<MainScreen> {
     _scanningService.onLog = (line) {
       if (!mounted) return;
       final t = DateTime.now();
-      String two(int v) => v.toString().padLeft(2, '0');
       setState(() {
-        _logLines.add('$line (${two(t.hour)}:${two(t.minute)}:${two(t.second)})');
-        if (_logLines.length > 500) {
-          _logLines.removeAt(0);
-        }
+        _logLines.add('$line (${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)})');
+        _trimLog();
       });
     };
+    PackageInfo.fromPlatform().then((p) {
+      _appVersion = '${p.version}+${p.buildNumber} (${p.packageName})';
+    }).catchError((_) {});
     _checkForUpdates();
   }
   
@@ -241,9 +243,17 @@ class _MainScreenState extends State<MainScreen> {
 
   ScanningState? _lastScanState;
 
-  /// Reacts to scan state changes (Scanner screen redraw).
+  /// Reacts to scan state changes (session log footer, Scanner screen redraw).
   void _onScanningServiceChanged() {
     final st = _scanningService.state;
+    final wasSystemActive = _lastScanState == ScanningState.searching ||
+        _lastScanState == ScanningState.locked ||
+        _lastScanState == ScanningState.stopping;
+    if (st == ScanningState.idle && wasSystemActive && _logSessionIsSystem) {
+      _endLogSession('stopped');
+    } else if (st == ScanningState.error && _logSessionIsSystem && _logSessionOpen) {
+      _endLogSession('error');
+    }
     // Redraw the Scanner screen when the scan state changes (e.g. to show
     // "No radio device detected" when nothing else would trigger a rebuild).
     if (st != _lastScanState && mounted) {
@@ -300,9 +310,7 @@ class _MainScreenState extends State<MainScreen> {
       _watchForUsbErrors(line);
       setState(() {
         _logLines.add(line);
-        if (_logLines.length > 500) {
-          _logLines.removeAt(0);
-        }
+        _trimLog();
       });
 
       // Auto-scroll log when on log tab
@@ -437,6 +445,107 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  // ---- Log session header/footer -------------------------------------------
+  String _appVersion = '';
+  int _loggedSessionId = -1;
+  bool _logSessionOpen = false;
+  bool _logSessionIsSystem = false;
+  DateTime? _logSessionStart;
+
+  String _two(int v) => v.toString().padLeft(2, '0');
+  String _stamp(DateTime t) =>
+      '${t.year}-${_two(t.month)}-${_two(t.day)} ${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)}';
+
+  /// Configuration lines, prefixed "[cfg]" so they're easy to find.
+  String? _cfgCc;
+  String? _cfgSystemId;
+  String? _cfgSite;
+
+  List<String> _configLines() {
+    final ss = _scanningService;
+    final st = _settingsService;
+    final lines = <String>[];
+    lines.add('[cfg] App: Pocket25 $_appVersion');
+    if (_logSessionIsSystem) {
+      // Stop clears the site details before the footer is written, so keep
+      // the last known values from this session.
+      final ccNow = ss.controlChannelFrequencies.map((f) => f.toStringAsFixed(4)).join(', ');
+      if (ccNow.isNotEmpty) _cfgCc = ccNow;
+      if (ss.currentSystemId != null) _cfgSystemId = '${ss.currentSystemId}';
+      final siteNow = ss.currentSiteName ?? ss.lastSiteName;
+      if (siteNow != null) _cfgSite = siteNow;
+      lines.add('[cfg] Mode: system scan | site: ${_cfgSite ?? '?'}'
+          ' | system id: ${_cfgSystemId ?? '?'}');
+      lines.add('[cfg] Modulation: ${ss.currentModulation} | control channels: ${_cfgCc ?? '?'}');
+      lines.add('[cfg] GPS site hopping: ${ss.gpsHoppingEnabled ? 'on' : 'off'}');
+    } else {
+      final adv = AdvancedScanScreen.lastStartedCommand;
+      if (ss.currentChannelName != null) {
+        lines.add('[cfg] Mode: ${ss.currentChannelName}'
+            '${ss.currentFrequency != null ? ' | ${ss.currentFrequency} MHz' : ''}');
+      } else {
+        lines.add('[cfg] Mode: Advanced Scan / manual${adv != null ? ' | command: $adv' : ''}');
+      }
+    }
+    lines.add('[cfg] SDR: source=${st.rtlSource.name} gain=${st.gain} ppm=${st.ppm}'
+        ' bias-T=${st.biasTee ? 'on' : 'off'} sample rate=${st.sampleRate}');
+    lines.add('[cfg] Muted in Scan Grid: ${_mutedTalkgroups.length}');
+    lines.add('[cfg] Restart radio after 3 min silence: ${_settingsService.noSignalRestart ? 'ON' : 'off'}');
+    lines.add('[cfg] Receive: auto PPM=${_settingsService.rxAutoPpm ? 'ON' : 'off'}'
+        ' | auto gain=${_settingsService.rxAutoGain ? 'ON' : 'off'}'
+        ' | FLL=${_settingsService.rxFll ? 'ON' : 'off'} | TED=${_settingsService.rxTed ? 'ON' : 'off'}'
+        ' | both TDMA slots=${_settingsService.rxBothSlots ? 'ON' : 'off'}'
+        ' | P25-only sync=${_settingsService.p25OnlySync ? 'ON' : 'off'}');
+    return lines;
+  }
+
+  void _beginLogSession({required bool system}) {
+    final now = DateTime.now();
+    _logLines.clear();
+    _logSessionOpen = true;
+    _logSessionIsSystem = system;
+    _logSessionStart = now;
+    _loggedSessionId = system ? _scanningService.sessionCounter : -1;
+    _cfgCc = null;
+    _cfgSystemId = null;
+    _cfgSite = null;
+    _logLines.add('[cfg] ===== SESSION START ${_stamp(now)} =====');
+    _logLines.addAll(_configLines());
+  }
+
+  /// Log tab keeps the most recent [_maxLogLines] lines (was 2000).
+  static const int _maxLogLines = 5000;
+  void _trimLog() {
+    final extra = _logLines.length - _maxLogLines;
+    if (extra > 0) _logLines.removeRange(0, extra);
+  }
+
+  /// Appends the config again at the end so long sessions still document it.
+  void _endLogSession(String reason) {
+    if (!_logSessionOpen) return;
+    _logSessionOpen = false;
+    final now = DateTime.now();
+    final start = _logSessionStart;
+    String dur = '';
+    if (start != null) {
+      final d = now.difference(start);
+      dur = ' (duration ${d.inHours > 0 ? '${d.inHours}:' : ''}${_two(d.inMinutes % 60)}:${_two(d.inSeconds % 60)})';
+    }
+    setState(() {
+      _logLines.add('[cfg] ===== SESSION END ${_stamp(now)}$dur — $reason =====');
+      _logLines.addAll(_configLines());
+      _trimLog();
+    });
+  }
+
+  /// Stop requested by the user from a screen (not internal engine restarts).
+  Future<void> _stopByUser() async {
+    if (!_scanningService.isSystemScanActive) {
+      _endLogSession('stopped');
+    }
+    await _stop();
+  }
+
   Future<void> _start() async {
     // Receive options (auto PPM, auto gain, FLL, TED, both TDMA slots) apply at
     // every engine start, in every mode.
@@ -452,7 +561,16 @@ class _MainScreenState extends State<MainScreen> {
     try {
       setState(() {
         _isRunning = true;
-        _logLines.clear();
+        // Log = one scan session: cleared and given a config header when a new
+        // session starts. Control-channel cycling restarts the engine inside the
+        // same system-scan session, so that must not clear the log.
+        if (_scanningService.isSystemScanActive) {
+          if (_scanningService.sessionCounter != _loggedSessionId) {
+            _beginLogSession(system: true);
+          }
+        } else {
+          _beginLogSession(system: false);
+        }
         _recentCalls.clear();
         _currentCall = null;
       });
@@ -485,9 +603,9 @@ class _MainScreenState extends State<MainScreen> {
   /// through ScanningService so its lock-check timer doesn't restart it.
   Future<void> _stopAnyScan() async {
     if (_scanningService.isSystemScanActive) {
-      await _scanningService.stopScanning();
+      await _scanningService.stopScanning(); // footer written by _onScanningServiceChanged
     } else {
-      await _stop();
+      await _stopByUser();
     }
   }
 
@@ -540,7 +658,7 @@ class _MainScreenState extends State<MainScreen> {
           dsdPlugin: _dsdFlutterPlugin,
           isRunning: _isRunning,
           onStart: _start,
-          onStop: _stop,
+          onStop: _stopByUser,
         );
       case 4:
         return NetworkScreen(
@@ -553,7 +671,7 @@ class _MainScreenState extends State<MainScreen> {
           scanningService: _scanningService,
           isRunning: _isRunning,
           onStart: _start,
-          onStop: _stop,
+          onStop: _stopByUser,
           onStatusUpdate: _updateStatus,
           onNavigateToScanner: () {
             setState(() {

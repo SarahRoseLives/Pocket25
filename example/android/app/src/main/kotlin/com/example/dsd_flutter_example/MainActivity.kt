@@ -12,6 +12,8 @@ import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import android.content.ContentValues
+import android.provider.MediaStore
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -20,6 +22,7 @@ class MainActivity : FlutterActivity() {
     private val TAG = "Pocket25-USB"
     private val RTL_TCP_CHANNEL = "pocket25/rtl_tcp"
     private val NATIVE_USB_CHANNEL = "pocket25/native_usb"
+    private val FILES_CHANNEL = "pocket25/files"
     private val RTL_TCP_REQUEST_CODE = 1234
     private val ACTION_USB_PERMISSION = "com.example.dsd_flutter_example.USB_PERMISSION"
     
@@ -77,8 +80,45 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private var filesChannel: MethodChannel? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // Save text (e.g. the DSD log) into the public Downloads folder.
+        // Uses MediaStore (Android 10+), so no storage permission is needed.
+        filesChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILES_CHANNEL)
+        filesChannel!!.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "saveTextToDownloads" -> {
+                    val fileName = call.argument<String>("fileName") ?: "pocket25.txt"
+                    val text = call.argument<String>("text") ?: ""
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                        result.error("UNSUPPORTED", "Saving to Downloads needs Android 10 or newer", null)
+                    } else {
+                        try {
+                            val values = ContentValues().apply {
+                                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                                put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/Pocket25")
+                            }
+                            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                            if (uri == null) {
+                                result.error("SAVE_FAILED", "Could not create file in Downloads", null)
+                            } else {
+                                contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                                    ?: throw Exception("Could not open file for writing")
+                                result.success("Download/Pocket25/$fileName")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "saveTextToDownloads failed", e)
+                            result.error("SAVE_FAILED", e.message, null)
+                        }
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
         
         // Register USB permission receiver
         val filter = IntentFilter(ACTION_USB_PERMISSION)
