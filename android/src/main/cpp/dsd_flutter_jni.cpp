@@ -1018,9 +1018,17 @@ static void* poll_thread_func(void* arg) {
         // synctype already declared above
         int carrier = g_state->carrier;
         
-        // Send signal updates if metrics changed
+        // Send signal updates if metrics changed.
+        // Pocket25 LSM patch: also resend about once a second while in sync. On a
+        // voice channel the TSBK counters and synctype don't change, so without
+        // this heartbeat the app saw no activity during a long call and, after
+        // 15 s, restarted the radio on the next control channel mid-call.
+        static int s_sync_heartbeat = 0;
+        bool in_sync_now = DSD_SYNC_IS_DMR(synctype) || DSD_SYNC_IS_P25(synctype);
+        bool heartbeat_due = in_sync_now && (++s_sync_heartbeat >= 10);
         if (tsbk_ok != g_last_tsbk_ok || tsbk_err != g_last_tsbk_err || 
-            synctype != g_last_synctype || carrier != g_last_carrier) {
+            synctype != g_last_synctype || carrier != g_last_carrier || heartbeat_due) {
+            s_sync_heartbeat = 0;
             
             // Check if we have sync (DMR or P25)
             bool hasSync = DSD_SYNC_IS_DMR(synctype) || DSD_SYNC_IS_P25(synctype);

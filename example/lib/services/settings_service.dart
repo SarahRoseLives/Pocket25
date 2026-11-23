@@ -25,6 +25,7 @@ class SettingsService extends ChangeNotifier {
   bool _rxTed = false;       // symbol timing recovery (C4FM)
   bool _rxBothSlots = false; // play both TDMA slots (P25 Phase 2 / DMR)
   bool _p25OnlySync = true;  // system scans listen for P25 sync only
+  bool _noSignalRestart = false;   // restart the radio once after 3 min with no control channel
   
   // Native USB state (RTL-SDR)
   int _nativeUsbFd = -1;
@@ -59,6 +60,7 @@ class SettingsService extends ChangeNotifier {
     _rxTed = prefs.getBool('rx_ted') ?? _rxTed;
     _rxBothSlots = prefs.getBool('rx_both_slots') ?? _rxBothSlots;
     _p25OnlySync = prefs.getBool('rx_p25_only_sync') ?? _p25OnlySync;
+    _noSignalRestart = prefs.getBool('no_signal_restart') ?? _noSignalRestart;
     _hackrfLnaGain = prefs.getInt('sdr_hackrf_lna_gain') ?? _hackrfLnaGain;
     _hackrfVgaGain = prefs.getInt('sdr_hackrf_vga_gain') ?? _hackrfVgaGain;
     
@@ -83,6 +85,7 @@ class SettingsService extends ChangeNotifier {
     await prefs.setBool('rx_ted', _rxTed);
     await prefs.setBool('rx_both_slots', _rxBothSlots);
     await prefs.setBool('rx_p25_only_sync', _p25OnlySync);
+    await prefs.setBool('no_signal_restart', _noSignalRestart);
     await prefs.setInt('sdr_hackrf_lna_gain', _hackrfLnaGain);
     await prefs.setInt('sdr_hackrf_vga_gain', _hackrfVgaGain);
     
@@ -106,6 +109,7 @@ class SettingsService extends ChangeNotifier {
   bool get rxTed => _rxTed;
   bool get rxBothSlots => _rxBothSlots;
   bool get p25OnlySync => _p25OnlySync;
+  bool get noSignalRestart => _noSignalRestart;
   int get nativeUsbFd => _nativeUsbFd;
   String get nativeUsbPath => _nativeUsbPath;
   bool get hasNativeUsbDevice => _nativeUsbFd >= 0;
@@ -177,6 +181,12 @@ class SettingsService extends ChangeNotifier {
     _rxTed = ted ?? _rxTed;
     _rxBothSlots = bothSlots ?? _rxBothSlots;
     _p25OnlySync = p25OnlySync ?? _p25OnlySync;
+    _saveSettings();
+    notifyListeners();
+  }
+
+  void updateNoSignalRestart(bool value) {
+    _noSignalRestart = value;
     _saveSettings();
     notifyListeners();
   }

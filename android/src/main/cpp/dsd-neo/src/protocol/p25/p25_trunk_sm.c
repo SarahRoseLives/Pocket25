@@ -166,6 +166,8 @@ tg_is_blocked(const dsd_state* state, int tg) {
 
 // External filter check function provided by dsd_flutter
 extern int dsd_flutter_should_follow_tg(int tg);
+/* Pocket25: true while the app has frozen retunes (engine start / CC switch). */
+extern _Bool dsd_flutter_retune_frozen(void);
 
 static int
 grant_allowed(dsd_opts* opts, dsd_state* state, const p25_sm_event_t* ev) {
@@ -252,6 +254,14 @@ handle_grant(p25_sm_ctx_t* ctx, dsd_opts* opts, dsd_state* state, const p25_sm_e
 
     // Check grant policy
     if (!grant_allowed(opts, state, ev)) {
+        return;
+    }
+
+    // Pocket25: while retunes are frozen the hardware cannot leave the CC, so
+    // marking TUNED here would park the SM on the CC thinking it is on the VC
+    // until grant-timeout (silence). Defer; grant updates repeat the grant.
+    if (opts->audio_in_type == AUDIO_IN_RTL && dsd_flutter_retune_frozen()) {
+        sm_log(opts, state, "grant-deferred-retune-frozen");
         return;
     }
 

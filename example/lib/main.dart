@@ -98,6 +98,18 @@ class _MainScreenState extends State<MainScreen> {
     _listenToSiteEvents();
     _startCallTimeoutTimer();
     _initializeFilters();
+    _scanningService.addListener(_onScanningServiceChanged);
+    _scanningService.onLog = (line) {
+      if (!mounted) return;
+      final t = DateTime.now();
+      String two(int v) => v.toString().padLeft(2, '0');
+      setState(() {
+        _logLines.add('$line (${two(t.hour)}:${two(t.minute)}:${two(t.second)})');
+        if (_logLines.length > 500) {
+          _logLines.removeAt(0);
+        }
+      });
+    };
     _checkForUpdates();
   }
   
@@ -226,6 +238,19 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
   }
+
+  ScanningState? _lastScanState;
+
+  /// Reacts to scan state changes (Scanner screen redraw).
+  void _onScanningServiceChanged() {
+    final st = _scanningService.state;
+    // Redraw the Scanner screen when the scan state changes (e.g. to show
+    // "No radio device detected" when nothing else would trigger a rebuild).
+    if (st != _lastScanState && mounted) {
+      setState(() {});
+    }
+    _lastScanState = st;
+  }
   
   Future<void> _toggleMute(int talkgroup) async {
     // Update state immediately for responsive UI
@@ -265,12 +290,14 @@ class _MainScreenState extends State<MainScreen> {
     _callTimeoutTimer?.cancel();
     _filterSyncTimer?.cancel();
     _logScrollController.dispose();
+    _scanningService.removeListener(_onScanningServiceChanged);
     _scanningService.dispose();
     super.dispose();
   }
 
   void _listenToOutput() {
     _outputSubscription = _dsdFlutterPlugin.outputStream.listen((line) {
+      _watchForUsbErrors(line);
       setState(() {
         _logLines.add(line);
         if (_logLines.length > 500) {
@@ -388,6 +415,28 @@ class _MainScreenState extends State<MainScreen> {
     // Status updates can be logged or displayed elsewhere if needed
   }
 
+  // ---- Radio-not-responding detection (Pocket25 LSM patch) -----------------
+  // When the phone loses USB contact with the dongle (loose OTG adapter,
+  // overheating, USB power cut) librtlsdr prints a burst of register/I2C
+  // failures. 5 or more within 5 s during a system scan = radio not responding.
+  static final RegExp _usbErrorPattern =
+      RegExp(r'rtlsdr_(demod_)?(read|write)_reg failed|i2c (wr|rd) failed');
+  final List<DateTime> _usbErrorTimes = [];
+
+  void _watchForUsbErrors(String line) {
+    if (!_usbErrorPattern.hasMatch(line)) return;
+    final now = DateTime.now();
+    _usbErrorTimes.add(now);
+    _usbErrorTimes.removeWhere((t) => now.difference(t).inSeconds >= 5);
+    if (_usbErrorTimes.length >= 5 && _scanningService.isSystemScanActive) {
+      _usbErrorTimes.clear();
+      if (mounted) {
+        setState(() => _logLines.add('[cfg] Radio not responding (repeated USB errors): scan stopped'));
+      }
+      _scanningService.reportRadioNotResponding();
+    }
+  }
+
   Future<void> _start() async {
     // Receive options (auto PPM, auto gain, FLL, TED, both TDMA slots) apply at
     // every engine start, in every mode.
@@ -432,6 +481,16 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  /// Stop everything from the Scanner screen. A system scan must be stopped
+  /// through ScanningService so its lock-check timer doesn't restart it.
+  Future<void> _stopAnyScan() async {
+    if (_scanningService.isSystemScanActive) {
+      await _scanningService.stopScanning();
+    } else {
+      await _stop();
+    }
+  }
+
   Widget _buildCurrentScreen() {
     switch (_currentIndex) {
       case 0:
@@ -441,6 +500,8 @@ class _MainScreenState extends State<MainScreen> {
           isRunning: _isRunning,
           scanningService: _scanningService,
           onToggleMute: _toggleMute,
+          onStopScan: _stopAnyScan,
+          onResumeScan: _scanningService.resumeLastSite,
         );
       case 1:
         return LogScreen(

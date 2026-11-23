@@ -322,8 +322,16 @@ class _AdvancedScanScreenState extends State<AdvancedScanScreen> {
                     }
                     
                     // Stop in background to avoid blocking UI
-                    await Future.microtask(() {
-                      widget.onStop();
+                    // If a system (trunked) scan is active, stop it through the
+                    // scanning service so its lock-check timer is cancelled too;
+                    // otherwise that timer restarts the scan 10-15 s later.
+                    await Future.microtask(() async {
+                      final st = widget.scanningService.state;
+                      if (st == ScanningState.searching || st == ScanningState.locked) {
+                        await widget.scanningService.stopScanning();
+                      } else {
+                        widget.onStop();
+                      }
                     });
                     
                     if (mounted) {

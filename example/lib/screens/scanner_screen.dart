@@ -8,6 +8,10 @@ class ScannerScreen extends StatelessWidget {
   final bool isRunning;
   final ScanningService scanningService;
   final Function(int talkgroup)? onToggleMute;
+  /// Stop whatever is running (system scan, Quick Scan, conventional, Advanced).
+  final Future<void> Function()? onStopScan;
+  /// Restart the last system scan (site).
+  final Future<void> Function()? onResumeScan;
 
   const ScannerScreen({
     super.key,
@@ -16,6 +20,8 @@ class ScannerScreen extends StatelessWidget {
     required this.isRunning,
     required this.scanningService,
     this.onToggleMute,
+    this.onStopScan,
+    this.onResumeScan,
   });
   
   /// Get color for protocol badge
@@ -158,9 +164,92 @@ class ScannerScreen extends StatelessWidget {
                         ),
                       ],
                     ),
+                  // Stop / Resume control
+                  if (isRunning && onStopScan != null)
+                    Padding(
+                      padding: EdgeInsets.only(left: _spacing(context, 8)),
+                      child: TextButton.icon(
+                        onPressed: () => onStopScan!(),
+                        icon: Icon(Icons.stop, color: Colors.red[300], size: _iconSize(context, 20)),
+                        label: Text('STOP',
+                            style: TextStyle(color: Colors.red[300], fontSize: _fontSize(context, 14), fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(48, 40),
+                          padding: EdgeInsets.symmetric(horizontal: _spacing(context, 8)),
+                        ),
+                      ),
+                    )
+                  else if (!isRunning && onResumeScan != null && scanningService.canResumeLastSite)
+                    Flexible(
+                      child: TextButton.icon(
+                        onPressed: () => onResumeScan!(),
+                        icon: Icon(Icons.play_arrow, color: Colors.green[300], size: _iconSize(context, 20)),
+                        label: Text('RESUME ${scanningService.lastSiteName}',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: Colors.green[300], fontSize: _fontSize(context, 14), fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(48, 40),
+                          padding: EdgeInsets.symmetric(horizontal: _spacing(context, 8)),
+                        ),
+                      ),
+                    ),
                 ],
               ),
               
+              // No control channel heard for a while (no-signal watchdog)
+              if (isRunning && scanningService.noSignalWarning != null) ...[
+                SizedBox(height: _spacing(context, 12)),
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(_spacing(context, 12)),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.15),
+                    border: Border.all(color: Colors.orange[300]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.signal_cellular_off, color: Colors.orange[300], size: _iconSize(context, 24)),
+                      SizedBox(width: _spacing(context, 10)),
+                      Expanded(
+                        child: Text(
+                          scanningService.noSignalWarning!,
+                          style: TextStyle(color: Colors.orange[200], fontSize: _fontSize(context, 14)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // No radio found when the scan tried to start
+              if (!isRunning &&
+                  scanningService.state == ScanningState.error &&
+                  scanningService.deviceError != null) ...[
+                SizedBox(height: _spacing(context, 12)),
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(_spacing(context, 12)),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.15),
+                    border: Border.all(color: Colors.red[300]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.usb_off, color: Colors.red[300], size: _iconSize(context, 24)),
+                      SizedBox(width: _spacing(context, 10)),
+                      Expanded(
+                        child: Text(
+                          scanningService.deviceError!,
+                          style: TextStyle(color: Colors.red[200], fontSize: _fontSize(context, 14)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
               if (isRunning) ...[
                 SizedBox(height: _spacing(context, 12)),
                 Divider(color: Colors.grey[700], height: 1),

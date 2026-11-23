@@ -318,6 +318,37 @@ class _SdrSettingsScreenState extends State<SdrSettingsScreen> {
             ),
             const SizedBox(height: 16),
 
+            // Trunked call following (applies to every SDR source)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Trunked Call Following',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Options for trunked system scans.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Restart the radio if nothing is heard for 3 min'),
+                      subtitle: const Text('Once per outage, like unplugging and replugging the dongle. The "no signal" warning shows either way.'),
+                      value: widget.settings.noSignalRestart,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateNoSignalRestart(value);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
             // Receive options (ported from ClayF/Pocket25). Off = original behavior.
             Card(
               child: Padding(
