@@ -369,6 +369,9 @@ void p25_sm_on_indiv_grant(dsd_opts* opts, dsd_state* state, int channel, int sv
  */
 void p25_sm_on_release(dsd_opts* opts, dsd_state* state);
 
+/* Pocket25: switch to a priority talkgroup's call announced on the voice channel. */
+void p25_sm_priority_preempt(dsd_opts* opts, dsd_state* state, int channel, int tg);
+
 /**
  * @brief Optional periodic heartbeat/tick for safety fallback.
  *

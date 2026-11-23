@@ -99,6 +99,26 @@ class ScanningService extends ChangeNotifier {
   int? _currentSiteId;
   int? _previousSiteId; // Track previous site for detecting site switches
   String? _currentSiteName;
+  String _currentModulation = 'auto';
+  // Last system scan started by the user, for "Resume" on the Scanner screen
+  int? _lastSiteId;
+  String? _lastSiteName;
+  int? _lastSystemId;
+  String? get lastSiteName => _lastSiteName;
+  bool get canResumeLastSite => _lastSiteId != null && _lastSiteName != null;
+  // Incremented each time a new system scan session starts (user start, Resume,
+  // site change). Internal control-channel cycling does NOT change it.
+  int _sessionCounter = 0;
+  int get sessionCounter => _sessionCounter;
+  /// Control channel frequencies (MHz) of the current site, in priority order.
+  List<double> get controlChannelFrequencies => _controlChannels
+      .map((c) => (c['frequency'] as num?)?.toDouble())
+      .whereType<double>()
+      .toList();
+  /// True while a trunked system scan is active (searching or locked).
+  bool get isSystemScanActive =>
+      _state == ScanningState.searching || _state == ScanningState.locked;
+  String get currentModulation => _currentModulation;
   String? _currentChannelName; // For Quick Scan or Conventional channel name
   int? _currentSystemId;
   double? _currentFrequency;
@@ -116,6 +136,25 @@ class ScanningService extends ChangeNotifier {
   
   bool _hasLock = false;
   DateTime? _lastActivityTime;
+  DateTime? _lastSyncTime; // last signal event with sync (Pocket25 LSM patch)
+  // Message shown on the Scanner screen when no radio was found at scan start.
+  String? _deviceError;
+  String? get deviceError => _deviceError;
+
+  // No-signal watchdog (Pocket25 LSM patch): when a system scan hears no
+  // control channel at all for [noSignalSeconds], warn on the Scanner screen
+  // and in the log; optionally restart the radio connection once (a software
+  // "unplug and replug"), which clears a dongle whose sample stream stalled.
+  static const int noSignalSeconds = 180;
+  DateTime? _huntSince;            // start of the current scan attempt
+  bool _noSignalReported = false;  // warned for the current quiet stretch
+  bool _noSignalRestartTried = false;
+  bool _watchdogRestarting = false;
+  DateTime? _noSignalFirstSeen;    // when the first warning fired
+  String? _noSignalWarning;
+  String? get noSignalWarning => _noSignalWarning;
+  /// Set by the app to receive lines for the Log tab.
+  void Function(String line)? onLog;
   DateTime? _rtlTcpReconnectTime; // Track when we reconnected for buffer flush delay
   DateTime? _channelSwitchTime; // Track when we switched channels to ignore stale data
   bool _gpsHoppingEnabled = false;
@@ -266,6 +305,7 @@ class ScanningService extends ChangeNotifier {
       
       // Update counters (only meaningful for P25)
       if (isP25) {
+        _recordBerSample(tsbkOk, tsbkErr);
         if (tsbkOk > _tsbkCount) {
           _tsbkCount = tsbkOk;
           _lastTsbkTime = DateTime.now();
@@ -329,7 +369,18 @@ class ScanningService extends ChangeNotifier {
       if (hasSync) {
         _consecutiveSyncs++;
         _lastActivityTime = DateTime.now();
-        
+        _lastSyncTime = _lastActivityTime;
+        if (_noSignalWarning != null) {
+          final first = _noSignalFirstSeen;
+          final mins = first == null ? 0 : DateTime.now().difference(first).inMinutes + noSignalSeconds ~/ 60;
+          onLog?.call('[watch] Control channel heard again'
+              '${mins > 0 ? ' after about $mins min of silence' : ''}');
+          _noSignalWarning = null;
+          _noSignalFirstSeen = null;
+        }
+        _noSignalReported = false;
+        _noSignalRestartTried = false;
+
         // Require at least 3 consecutive syncs to declare lock
         if (_consecutiveSyncs >= 3 && !_hasLock) {
           _hasLock = true;
@@ -400,8 +451,13 @@ class ScanningService extends ChangeNotifier {
       _neighborFreqs = neighborFreqList.map((freq) => freq as int).toList();
       _neighborLastSeen = neighborLastSeenList.map((ts) => ts as int).toList();
       
-      // Update activity time when we receive network data (indicates valid P25 signal)
-      _lastActivityTime = DateTime.now();
+      // Update activity time when we receive network data, but only if we have
+      // had sync recently. Neighbor counts also change as old entries age out
+      // with no signal at all, which kept a dead channel looking "active".
+      if (_lastSyncTime != null &&
+          DateTime.now().difference(_lastSyncTime!).inSeconds < 3) {
+        _lastActivityTime = DateTime.now();
+      }
       
       if (kDebugMode) {
         print('Network update: $neighborCount neighbors');
@@ -489,6 +545,17 @@ class ScanningService extends ChangeNotifier {
     if (_state != ScanningState.idle) {
       await stopScanning();
     }
+    _sessionCounter++;
+
+    // Make sure the selected radio is plugged in before starting.
+    _deviceError = await _checkRadioPresent();
+    if (_deviceError != null) {
+      _lastSiteId = siteId; // so RESUME works once the radio is plugged in
+      _lastSiteName = siteName;
+      _lastSystemId = systemId;
+      _setState(ScanningState.error);
+      return;
+    }
 
     try {
       _previousSiteId = oldSiteId;
@@ -534,6 +601,21 @@ class ScanningService extends ChangeNotifier {
         _currentSystemId = await _db.getSystemIdForSite(siteId);
       }
       
+      _lastSiteId = siteId;
+      _lastSiteName = siteName;
+      _lastSystemId = systemId;
+      _saveLastSite();
+
+      // Normal system scan: drop any stale Advanced Scan command so its -i/-m
+      // options don't leak into this scan, then apply this site's modulation.
+      await _dsdPlugin.setCustomArgs('');
+      final siteModulation = await _db.getSiteModulation(siteId);
+      _currentModulation = siteModulation;
+      await _dsdPlugin.setModulation(DatabaseService.modulationCode(siteModulation));
+      if (kDebugMode) {
+        print('Site $siteName modulation: $siteModulation');
+      }
+
       // Load control channels for this site first (needed immediately)
       _controlChannels = await _db.getControlChannels(siteId);
       
@@ -552,6 +634,8 @@ class ScanningService extends ChangeNotifier {
         }
       }
       
+      _huntSince = DateTime.now();
+      _noSignalReported = false;
       _setState(ScanningState.searching);
       await _tryNextControlChannel(freezeRetunes: isSiteSwitch);
       
@@ -574,6 +658,24 @@ class ScanningService extends ChangeNotifier {
       if (kDebugMode) {
         print('Error starting scan: $e');
       }
+    }
+  }
+
+  /// Before each system-scan engine start: receive options, plus P25-only
+  /// sync if enabled (the native side clears P25-only when the engine stops).
+  Future<void> _armReceive() async {
+    try {
+      await _dsdPlugin.setReceiveOptions(
+        autoPpm: _settingsService.rxAutoPpm,
+        fll: _settingsService.rxFll,
+        ted: _settingsService.rxTed,
+        autoGain: _settingsService.rxAutoGain,
+        bothSlots: _settingsService.rxBothSlots,
+      );
+      await _dsdPlugin.setP25Only(_settingsService.p25OnlySync);
+      await _dsdPlugin.setRevisitCooldown(_settingsService.revisitCooldownMs);
+    } catch (e) {
+      if (kDebugMode) print('Receive options not applied: $e');
     }
   }
 
@@ -661,6 +763,7 @@ class ScanningService extends ChangeNotifier {
           }
           
           // Start the engine
+          await _armReceive();
           _onStart();
         } else {
           // Device already open - need to stop engine, let it clean up USB, then restart with new frequency
@@ -719,6 +822,7 @@ class ScanningService extends ChangeNotifier {
           await _dsdPlugin.setTrunkFollowing(true);
           
           // Start engine with new configuration
+          await _armReceive();
           _onStart();
           
           // Mark that we need to unfreeze when first sync arrives
@@ -774,6 +878,7 @@ class ScanningService extends ChangeNotifier {
           await _dsdPlugin.setTrunkFollowing(true);
           
           // Start the DSD engine
+          await _armReceive();
           _onStart();
         } else {
           // Device already open - retune to new frequency
@@ -808,7 +913,7 @@ class ScanningService extends ChangeNotifier {
             _settingsService.effectiveHost,
             _settingsService.effectivePort,
             _settingsService.frequencyHz,
-            gain: _settingsService.gain,
+            gain: _settingsService.gain * 10, // decoder expects tenths of dB (fix from ClayF/Pocket25)
             ppm: _settingsService.ppm,
             biasTee: _settingsService.biasTee,
           );
@@ -827,6 +932,7 @@ class ScanningService extends ChangeNotifier {
           _rtlTcpReconnectTime = DateTime.now();
           
           // Start DSD
+          await _armReceive();
           _onStart();
           
           // Wait for rtl_tcp connection to be established
@@ -878,6 +984,9 @@ class ScanningService extends ChangeNotifier {
       if (kDebugMode) {
         print('Error changing frequency: $e');
       }
+      if (e.toString().contains('No RTL-SDR USB devices found')) {
+        _deviceError = 'Radio device disconnected. Plug the RTL-SDR back in and tap RESUME.';
+      }
       _setState(ScanningState.error);
     }
   }
@@ -889,6 +998,7 @@ class ScanningService extends ChangeNotifier {
     }
 
     final now = DateTime.now();
+    _checkNoSignal(now);
     
     // Don't check during channel settle period
     if (_channelSwitchTime != null) {
@@ -954,7 +1064,152 @@ class ScanningService extends ChangeNotifier {
     }
   }
 
+  /// No-signal watchdog. Quiet time counts from the later of the scan start
+  /// and the last sync, so it covers every control channel in the list.
+  void _checkNoSignal(DateTime now) {
+    final start = _huntSince;
+    if (start == null || _noSignalReported || _watchdogRestarting) return;
+    final last = _lastSyncTime;
+    final quietFrom = (last != null && last.isAfter(start)) ? last : start;
+    if (now.difference(quietFrom).inSeconds < noSignalSeconds) return;
+
+    _noSignalReported = true;
+    final n = _controlChannels.length;
+    final chans = '$n control channel${n == 1 ? '' : 's'}';
+    if (!_noSignalRestartTried && _settingsService.noSignalRestart) {
+      _noSignalRestartTried = true;
+      _noSignalFirstSeen ??= now;
+      _noSignalWarning = 'No control channel heard for 3 min. Restarting the radio connection...';
+      onLog?.call('[watch] No control channel heard for 3 min on any of $chans '
+          '- restarting the radio connection (auto-recovery)');
+      notifyListeners();
+      _restartForNoSignal();
+      return;
+    }
+    final afterRestart = _noSignalRestartTried;
+    _noSignalFirstSeen ??= now;
+    _noSignalWarning = afterRestart
+        ? 'Still no control channel heard after restarting the radio. Check the '
+          'antenna and connector; if the dongle is hot, unplug it, let it cool, '
+          'plug it back in and tap RESUME. Still searching.'
+        : 'No control channel heard for 3 min. Check the antenna and connector. '
+          'If the dongle is hot or this keeps happening, tap STOP, unplug and '
+          'replug the dongle, then RESUME. Still searching.';
+    onLog?.call(afterRestart
+        ? '[watch] Still no control channel heard 3 min after the restart '
+          '(antenna/signal, or the dongle needs a replug) - still searching'
+        : '[watch] No control channel heard for 3 min on any of $chans - still searching');
+    notifyListeners();
+  }
+
+  Future<void> _restartForNoSignal() async {
+    final id = _currentSiteId;
+    final name = _currentSiteName;
+    if (id == null || name == null) return;
+    _watchdogRestarting = true;
+    try {
+      await startScanning(id, name, systemId: _currentSystemId);
+    } finally {
+      _watchdogRestarting = false;
+    }
+  }
+
+  /// Returns a message if the radio selected in SDR Settings isn't connected,
+  /// or null if it is (or if it can't be checked, e.g. a remote rtl_tcp server).
+  Future<String?> _checkRadioPresent() async {
+    try {
+      switch (_settingsService.rtlSource) {
+        case RtlSource.nativeUsb:
+          final devices = await NativeRtlSdrService.listDevices();
+          if (devices.isEmpty) {
+            return 'No radio device detected. Plug in the RTL-SDR '
+                '(with a USB-C OTG adapter) and tap RESUME.';
+          }
+          return null;
+        case RtlSource.hackrf:
+          final devices = await _dsdPlugin.hackrfListDevices();
+          if (devices.isEmpty) {
+            return 'No HackRF detected. Plug it in and tap RESUME.';
+          }
+          return null;
+        default:
+          return null; // remote rtl_tcp: nothing local to check
+      }
+    } catch (_) {
+      return null; // if the check itself fails, don't block scanning
+    }
+  }
+
+  /// Remember the last site across app restarts (for RESUME / auto-start).
+  Future<void> _saveLastSite() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_lastSiteId != null) await prefs.setInt('last_site_id', _lastSiteId!);
+      if (_lastSiteName != null) await prefs.setString('last_site_name', _lastSiteName!);
+      if (_lastSystemId != null) {
+        await prefs.setInt('last_system_id', _lastSystemId!);
+      } else {
+        await prefs.remove('last_system_id');
+      }
+    } catch (_) {}
+  }
+
+  /// Load the last site saved by a previous run (does not start scanning).
+  Future<void> loadLastSite() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _lastSiteId ??= prefs.getInt('last_site_id');
+      _lastSiteName ??= prefs.getString('last_site_name');
+      _lastSystemId ??= prefs.getInt('last_system_id');
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  /// Scan quality over roughly the last 10 seconds (Pocket25 LSM patch;
+  /// idea from ClayF/Pocket25). Percent of control-channel messages that
+  /// failed error correction. Null when there isn't enough recent data.
+  final List<List<int>> _berSamples = []; // [epoch ms, ok total, err total]
+
+  void _recordBerSample(int ok, int err) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _berSamples.add([now, ok, err]);
+    _berSamples.removeWhere((s) => now - s[0] > 10000);
+  }
+
+  double? get recentBer {
+    if (_berSamples.length < 2) return null;
+    final first = _berSamples.first, last = _berSamples.last;
+    final ok = last[1] - first[1], err = last[2] - first[2];
+    if (ok < 0 || err < 0 || ok + err < 5) return null;
+    return err * 100.0 / (ok + err);
+  }
+
+  /// Restart the most recent system scan (site) started from Systems.
+  Future<void> resumeLastSite() async {
+    if (!canResumeLastSite) return;
+    await startScanning(_lastSiteId!, _lastSiteName!, systemId: _lastSystemId);
+  }
+
+  /// The dongle stopped answering USB commands (seen as repeated
+  /// "rtlsdr_*_reg failed" / "i2c ... failed" lines from the decoder). Stop the
+  /// scan so it doesn't keep restarting a dead radio, and tell the user.
+  Future<void> reportRadioNotResponding() async {
+    if (_state != ScanningState.searching && _state != ScanningState.locked) return;
+    await stopScanning();
+    _deviceError = 'Radio not responding. Check the USB-C OTG adapter and cable '
+        '(reseat them), and that the dongle isn\'t overheating, then tap RESUME.';
+    _setState(ScanningState.error);
+  }
+
   Future<void> stopScanning() async {
+    _deviceError = null;
+    if (!_watchdogRestarting) {
+      _noSignalWarning = null;
+      _noSignalFirstSeen = null;
+      _noSignalReported = false;
+      _noSignalRestartTried = false;
+    }
+    _huntSince = null;
     _setState(ScanningState.stopping);
     
     _lockCheckTimer?.cancel();

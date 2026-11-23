@@ -317,6 +317,131 @@ class _SdrSettingsScreenState extends State<SdrSettingsScreen> {
               ),
             ),
             const SizedBox(height: 16),
+
+            // Trunked call following (applies to every SDR source)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Trunked Call Following',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'The phone follows one voice call at a time. These keep it off calls you can\'t or don\'t want to hear. Takes effect at the next scan start.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Skip encrypted calls'),
+                      subtitle: const Text('Don\'t tune to calls flagged encrypted (they can\'t be decoded)'),
+                      value: widget.settings.skipEncryptedCalls,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateSkipEncryptedCalls(value);
+                      },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Don\'t re-join a call that just ended'),
+                      subtitle: const Text('For 1.5 s after a call ends, ignore repeat announcements of it (saves ~1 s per call; a very quick reply may be joined late)'),
+                      value: widget.settings.revisitCooldown,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateRevisitCooldown(value);
+                      },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Auto-start when the dongle is plugged in'),
+                      subtitle: const Text('Resume the last site when the RTL-SDR is attached'),
+                      value: widget.settings.autoStartOnAttach,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateAutoStartOnAttach(value);
+                      },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Restart the radio if nothing is heard for 3 min'),
+                      subtitle: const Text('Once per outage, like unplugging and replugging the dongle. The "no signal" warning shows either way.'),
+                      value: widget.settings.noSignalRestart,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateNoSignalRestart(value);
+                      },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Follow my talkgroups only'),
+                      subtitle: const Text('Only tune to this system\'s talkgroups that aren\'t muted in Scan Grid. Off = follow everything except muted talkgroups.'),
+                      value: widget.settings.followSelectedOnly,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateFollowSelectedOnly(value);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Receive options (ported from ClayF/Pocket25). Off = original behavior.
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Receive Options (advanced)',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Decoder tuning. Leave off unless you are troubleshooting. Takes effect at the next scan start.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    ),
+                    SwitchListTile(
+                      title: const Text('P25-only sync during system scans'),
+                      subtitle: const Text('Ignore DMR/D-STAR/YSF/NXDN sync while following a P25 system (fewer false syncs)'),
+                      value: widget.settings.p25OnlySync,
+                      onChanged: (v) { setState(() {}); widget.settings.updateReceiveOptions(p25OnlySync: v); },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Play both TDMA slots'),
+                      subtitle: const Text('P25 Phase 2 / DMR: also play slot 2 (off by default: slot 2 can be choppy)'),
+                      value: widget.settings.rxBothSlots,
+                      onChanged: (v) { setState(() {}); widget.settings.updateReceiveOptions(bothSlots: v); },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Automatic PPM correction'),
+                      subtitle: const Text('Track the dongle\'s frequency drift from the signal'),
+                      value: widget.settings.rxAutoPpm,
+                      onChanged: (v) { setState(() {}); widget.settings.updateReceiveOptions(autoPpm: v); },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Automatic gain'),
+                      subtitle: const Text('Let the decoder set tuner gain (overrides the Gain slider)'),
+                      value: widget.settings.rxAutoGain,
+                      onChanged: (v) { setState(() {}); widget.settings.updateReceiveOptions(autoGain: v); },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Carrier tracking (FLL)'),
+                      subtitle: const Text('C4FM sites only'),
+                      value: widget.settings.rxFll,
+                      onChanged: (v) { setState(() {}); widget.settings.updateReceiveOptions(fll: v); },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Symbol timing recovery (TED)'),
+                      subtitle: const Text('C4FM sites only'),
+                      value: widget.settings.rxTed,
+                      onChanged: (v) { setState(() {}); widget.settings.updateReceiveOptions(ted: v); },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
             
             // HackRF-specific settings
             if (widget.settings.rtlSource == RtlSource.hackrf) ...[

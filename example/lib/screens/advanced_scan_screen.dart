@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dsd_flutter/dsd_flutter.dart';
 import '../services/settings_service.dart';
 import '../services/scanning_service.dart';
 import '../services/native_rtlsdr_service.dart';
 
 class AdvancedScanScreen extends StatefulWidget {
+  /// Command of the most recent Advanced Scan start (for the log's session header).
+  static String? lastStartedCommand;
+
   final SettingsService settings;
   final DsdFlutter dsdPlugin;
   final ScanningService scanningService;
@@ -71,6 +75,86 @@ class _AdvancedScanScreenState extends State<AdvancedScanScreen> {
     super.initState();
     _commandController = TextEditingController(text: '-fp -fx -i rtl:0:851.375M:22:-2:24:0:2');
     _isRunning = widget.isRunning;
+    _loadLastCommand();
+  }
+
+  static const String _lastCommandKey = 'advanced_scan_last_command';
+
+  /// Restore the last command used, if any (falls back to the example above).
+  Future<void> _loadLastCommand() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_lastCommandKey);
+      if (saved != null && saved.trim().isNotEmpty && mounted) {
+        setState(() => _commandController.text = saved);
+      }
+    } catch (_) {
+      // Keep the default example on any storage error
+    }
+  }
+
+  Future<void> _saveLastCommand(String command) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_lastCommandKey, command);
+    } catch (_) {}
+  }
+
+  /// Value of the "-i" option (whole-token match), or null.
+  static String? _inputSpec(String command) {
+    final tokens = command.split(RegExp(r'\s+'));
+    for (var i = 0; i < tokens.length - 1; i++) {
+      if (tokens[i] == '-i') return tokens[i + 1];
+    }
+    return null;
+  }
+
+  /// Frequency in Hz from an "rtl:dev:freq[:...]" spec such as 851.375M / 851375000 / 851.375k.
+  static int? _rtlSpecFrequencyHz(String spec) {
+    final parts = spec.split(':');
+    if (parts.length < 3) return null;
+    final f = parts[2].trim();
+    if (f.isEmpty) return null;
+    final suffix = f[f.length - 1].toUpperCase();
+    double mult = 1;
+    String num = f;
+    if (suffix == 'M') { mult = 1e6; num = f.substring(0, f.length - 1); }
+    else if (suffix == 'K') { mult = 1e3; num = f.substring(0, f.length - 1); }
+    else if (suffix == 'G') { mult = 1e9; num = f.substring(0, f.length - 1); }
+    final v = double.tryParse(num);
+    if (v == null) return null;
+    return (v * mult).round();
+  }
+
+  /// With the Native USB source selected and an "rtl" input, Android requires the
+  /// USB device to be opened through the system (permission + file descriptor).
+  /// Do the same open/connect the normal scanner does so DSD-Neo gets the fd.
+  /// Other inputs (rtltcp:, files, etc.) and other sources are left untouched.
+  Future<void> _prepareNativeUsbIfNeeded(String command) async {
+    if (widget.settings.rtlSource != RtlSource.nativeUsb) return;
+    final spec = _inputSpec(command);
+    if (spec == null || !(spec == 'rtl' || spec.startsWith('rtl:'))) return;
+
+    final devices = await NativeRtlSdrService.listDevices();
+    if (devices.isEmpty) {
+      throw Exception('No RTL-SDR USB devices found');
+    }
+    final result = await NativeRtlSdrService.openDevice(devices.first.deviceName);
+    if (result == null) {
+      throw Exception('Failed to open RTL-SDR USB device (permission denied?)');
+    }
+    final ok = await widget.dsdPlugin.connectNativeUsb(
+      fd: result['fd'] as int,
+      devicePath: result['devicePath'] as String,
+      freqHz: _rtlSpecFrequencyHz(spec) ?? widget.settings.frequencyHz,
+      sampleRate: widget.settings.sampleRate,
+      gain: widget.settings.gain * 10, // tenths of dB; the rtl: spec's own gain still applies
+      ppm: widget.settings.ppm,
+      biasTee: widget.settings.biasTee,
+    );
+    if (!ok) {
+      throw Exception('Failed to configure native RTL-SDR');
+    }
   }
 
   @override
@@ -129,6 +213,11 @@ class _AdvancedScanScreenState extends State<AdvancedScanScreen> {
 
     try {
       // Set custom command args - this will be parsed by DSD on start
+      // Per-site modulation doesn't apply here; a -ma/-mc/-mq/-mg token in the command overrides Auto
+      await _saveLastCommand(command);
+      AdvancedScanScreen.lastStartedCommand = command;
+      await widget.dsdPlugin.setModulation(0);
+      await _prepareNativeUsbIfNeeded(command);
       await widget.dsdPlugin.setCustomArgs(command);
       
       // Clear any current system selection (Advanced Scan mode = no system)
@@ -320,8 +409,16 @@ class _AdvancedScanScreenState extends State<AdvancedScanScreen> {
                     }
                     
                     // Stop in background to avoid blocking UI
-                    await Future.microtask(() {
-                      widget.onStop();
+                    // If a system (trunked) scan is active, stop it through the
+                    // scanning service so its lock-check timer is cancelled too;
+                    // otherwise that timer restarts the scan 10-15 s later.
+                    await Future.microtask(() async {
+                      final st = widget.scanningService.state;
+                      if (st == ScanningState.searching || st == ScanningState.locked) {
+                        await widget.scanningService.stopScanning();
+                      } else {
+                        widget.onStop();
+                      }
                     });
                     
                     if (mounted) {

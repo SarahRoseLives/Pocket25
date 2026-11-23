@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <unistd.h>
 #include <cstring>
+#include <cstdlib>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -12,6 +13,7 @@
 #include <set>
 #include <mutex>
 #include <atomic>
+#include <cctype>
 
 #define LOG_TAG "DSD-Flutter"
 #define LOG_TAG_OUTPUT "DSD-Output"
@@ -100,6 +102,173 @@ static bool g_audio_muted_by_filter = false; // Track if filter muted audio
 // Custom DSD command arguments
 static std::string g_custom_args;
 static std::mutex g_custom_args_mutex;
+
+// ---------------------------------------------------------------------------
+// Per-site demodulation mode (Pocket25 LSM patch)
+//   0 = Auto  : leave the input path's own defaults, auto-switching on
+//   1 = C4FM  : lock C4FM (standard P25 Phase 1)
+//   2 = LSM   : lock CQPSK (P25 Phase 1 simulcast / LSM). Enables DSD-Neo's
+//               CQPSK front end (cqpsk_enable follows mod_qpsk).
+// Mirrors DSD-Neo's -mc / -mq semantics in runtime/cli/args.c.
+// ---------------------------------------------------------------------------
+static std::atomic<int> g_mod_mode{0};
+static bool g_mod_snapshot_valid = false;
+static bool g_mod_forced = false;  // a C4FM/LSM/GFSK lock has been applied since the last Auto
+static int g_mod_snap_c4fm = 1, g_mod_snap_qpsk = 0, g_mod_snap_gfsk = 0;
+static int g_mod_snap_rf_mod = 0, g_mod_snap_cli_lock = 0;
+
+// Parse a "-m<x>" token from custom args using whole-token matching.
+// Returns -1 if no -m token, else 0 auto (-ma), 1 c4fm (-mc), 2 lsm/qpsk (-mq), 3 gfsk (-mg).
+static int parse_custom_mod_token(const std::string& args) {
+    size_t pos = 0;
+    while (pos < args.size()) {
+        while (pos < args.size() && isspace((unsigned char)args[pos])) pos++;
+        size_t end = pos;
+        while (end < args.size() && !isspace((unsigned char)args[end])) end++;
+        std::string tok = args.substr(pos, end - pos);
+        if (tok == "-ma") return 0;
+        if (tok == "-mc") return 1;
+        if (tok == "-mq") return 2;
+        if (tok == "-mg") return 3;
+        pos = end;
+    }
+    return -1;
+}
+
+// Apply a modulation mode to g_opts/g_state. Caller must ensure the engine is stopped.
+static void apply_modulation_mode(int mode) {
+    if (!g_opts || !g_state) return;
+    if (mode == 0) {
+        // Auto: restore whatever the input path configured before we forced anything
+        if (g_mod_snapshot_valid) {
+            g_opts->mod_c4fm = g_mod_snap_c4fm;
+            g_opts->mod_qpsk = g_mod_snap_qpsk;
+            g_opts->mod_gfsk = g_mod_snap_gfsk;
+            g_state->rf_mod = g_mod_snap_rf_mod;
+            g_opts->mod_cli_lock = g_mod_snap_cli_lock;
+            g_mod_snapshot_valid = false;
+        } else if (g_mod_forced) {
+            // The input path re-set the mod_* flags after our lock (e.g. HackRF mode);
+            // keep its flags but undo the parts of the lock it doesn't touch.
+            g_opts->mod_cli_lock = 0;
+            g_state->rf_mod = 0;
+        }
+        g_mod_forced = false;
+        LOGI("Modulation: AUTO (c4fm=%d qpsk=%d gfsk=%d lock=%d)",
+             g_opts->mod_c4fm, g_opts->mod_qpsk, g_opts->mod_gfsk, g_opts->mod_cli_lock);
+        return;
+    }
+    g_mod_forced = true;
+    if (!g_mod_snapshot_valid) {
+        g_mod_snap_c4fm = g_opts->mod_c4fm;
+        g_mod_snap_qpsk = g_opts->mod_qpsk;
+        g_mod_snap_gfsk = g_opts->mod_gfsk;
+        g_mod_snap_rf_mod = g_state->rf_mod;
+        g_mod_snap_cli_lock = g_opts->mod_cli_lock;
+        g_mod_snapshot_valid = true;
+    }
+    if (mode == 1) {
+        g_opts->mod_c4fm = 1; g_opts->mod_qpsk = 0; g_opts->mod_gfsk = 0;
+        g_state->rf_mod = 0; g_opts->mod_cli_lock = 1;
+        LOGI("Modulation: C4FM locked");
+    } else if (mode == 2) {
+        g_opts->mod_c4fm = 0; g_opts->mod_qpsk = 1; g_opts->mod_gfsk = 0;
+        g_state->rf_mod = 1; g_opts->mod_cli_lock = 1;
+        LOGI("Modulation: LSM/CQPSK locked (CQPSK front end enabled)");
+    } else if (mode == 3) {
+        g_opts->mod_c4fm = 0; g_opts->mod_qpsk = 0; g_opts->mod_gfsk = 1;
+        g_state->rf_mod = 2; g_opts->mod_cli_lock = 1;
+        LOGI("Modulation: GFSK locked");
+    }
+}
+
+// Receive options (Pocket25 LSM patch; ported from ClayF/Pocket25 branch
+// cqpsk-lsm-mode, "Receive improvements", 2026-10-19). Set from SDR Settings and
+// applied at every engine start. Defaults keep the original 1.0.0+14 behavior.
+static std::atomic<bool> g_rx_auto_ppm{false};    // spectrum-based PPM drift correction
+static std::atomic<bool> g_rx_fll{false};         // carrier offset tracking (C4FM path)
+static std::atomic<bool> g_rx_ted{false};         // Gardner symbol timing recovery (C4FM path)
+static std::atomic<bool> g_rx_auto_gain{false};   // supervisory tuner auto gain (forces gain = auto)
+static std::atomic<bool> g_rx_both_slots{false};  // play both TDMA slots (P25 Phase 2 / DMR)
+// P25-only frame sync for trunked system scans: armed by the scanner right
+// before each start and cleared on stop, so other screens keep full sync.
+static std::atomic<bool> g_p25_only{false};
+
+// dsd-neo reads these DSP knobs from the environment when the RTL stream is
+// set up, so export them just before the engine thread starts.
+static void apply_receive_options() {
+    if (!g_opts || !g_state) return;
+    const bool auto_ppm = g_rx_auto_ppm.load();
+    const bool fll = g_rx_fll.load();
+    const bool ted = g_rx_ted.load();
+    const bool auto_gain = g_rx_auto_gain.load();
+    const bool both_slots = g_rx_both_slots.load();
+    setenv("DSD_NEO_AUTO_PPM", auto_ppm ? "1" : "0", 1);
+    g_opts->rtl_auto_ppm = auto_ppm ? 1 : 0;
+    setenv("DSD_NEO_FLL", fll ? "1" : "0", 1);
+    setenv("DSD_NEO_TED", ted ? "1" : "0", 1);
+    setenv("DSD_NEO_TUNER_AUTOGAIN", auto_gain ? "1" : "0", 1);
+    if (auto_gain) g_opts->rtl_gain_value = 0;  // autogain only runs at gain 0 (auto)
+    if (both_slots) {
+        g_opts->slot1_on = 1;
+        g_opts->slot2_on = 1;
+        g_opts->slot_preference = 2;  // whichever slot has voice
+    } else {  // original Pocket25 behavior
+        g_opts->slot1_on = 1;
+        g_opts->slot2_on = 0;
+        g_opts->slot_preference = 0;
+    }
+    const bool p25_only = g_p25_only.load();
+    // Save the protocol sync flags before P25-only changes them, and put them
+    // back on the next start without it (e.g. conventional DMR afterwards).
+    static bool s_frames_saved = false;
+    static int s_fr[11];
+    if (p25_only && !s_frames_saved) {
+        int v[11] = {g_opts->frame_p25p1, g_opts->frame_p25p2, g_opts->frame_dmr, g_opts->frame_dstar,
+                     g_opts->frame_x2tdma, g_opts->frame_ysf, g_opts->frame_nxdn48, g_opts->frame_nxdn96,
+                     g_opts->frame_dpmr, g_opts->frame_provoice, g_opts->frame_m17};
+        memcpy(s_fr, v, sizeof s_fr);
+        s_frames_saved = true;
+    } else if (!p25_only && s_frames_saved) {
+        g_opts->frame_p25p1 = s_fr[0]; g_opts->frame_p25p2 = s_fr[1]; g_opts->frame_dmr = s_fr[2];
+        g_opts->frame_dstar = s_fr[3]; g_opts->frame_x2tdma = s_fr[4]; g_opts->frame_ysf = s_fr[5];
+        g_opts->frame_nxdn48 = s_fr[6]; g_opts->frame_nxdn96 = s_fr[7]; g_opts->frame_dpmr = s_fr[8];
+        g_opts->frame_provoice = s_fr[9]; g_opts->frame_m17 = s_fr[10];
+        s_frames_saved = false;
+    }
+    if (p25_only) {
+        g_opts->frame_p25p1 = 1;
+        g_opts->frame_p25p2 = 1;
+        g_opts->frame_dmr = 0;
+        g_opts->frame_dstar = 0;
+        g_opts->frame_x2tdma = 0;
+        g_opts->frame_ysf = 0;
+        g_opts->frame_nxdn48 = 0;
+        g_opts->frame_nxdn96 = 0;
+        g_opts->frame_dpmr = 0;
+        g_opts->frame_provoice = 0;
+        g_opts->frame_m17 = 0;
+    }
+    fprintf(stderr, "Pocket25: receive auto_ppm=%d fll=%d ted=%d auto_gain=%d both_slots=%d p25_only=%d\n",
+            auto_ppm, fll, ted, auto_gain, both_slots, p25_only ? 1 : 0);
+}
+
+// Repeat-visit cooldown (Pocket25 LSM patch): after a call ends, ignore new
+// announcements of the same talkgroup on the same channel for this long (ms).
+// 0 = off (original behavior).
+static std::atomic<int> g_revisit_cooldown_ms{0};
+extern "C" int dsd_flutter_revisit_cooldown_ms(void) { return g_revisit_cooldown_ms.load(); }
+
+// Priority talkgroups (Pocket25 LSM patch): a call on one of these interrupts
+// a call on any other talkgroup (see p25_sm_priority_preempt in DSD-Neo).
+static std::set<int> g_priority_talkgroups;
+static std::mutex g_priority_mutex;
+
+extern "C" int dsd_flutter_is_priority_tg(int tg) {
+    if (tg <= 0) return 0;
+    std::lock_guard<std::mutex> lock(g_priority_mutex);
+    return g_priority_talkgroups.count(tg) ? 1 : 0;
+}
 
 // Retune freeze - temporarily block auto-retunes during system switch
 static std::atomic<bool> g_retune_freeze{false};
@@ -865,9 +1034,17 @@ static void* poll_thread_func(void* arg) {
         // synctype already declared above
         int carrier = g_state->carrier;
         
-        // Send signal updates if metrics changed
+        // Send signal updates if metrics changed.
+        // Pocket25 LSM patch: also resend about once a second while in sync. On a
+        // voice channel the TSBK counters and synctype don't change, so without
+        // this heartbeat the app saw no activity during a long call and, after
+        // 15 s, restarted the radio on the next control channel mid-call.
+        static int s_sync_heartbeat = 0;
+        bool in_sync_now = DSD_SYNC_IS_DMR(synctype) || DSD_SYNC_IS_P25(synctype);
+        bool heartbeat_due = in_sync_now && (++s_sync_heartbeat >= 10);
         if (tsbk_ok != g_last_tsbk_ok || tsbk_err != g_last_tsbk_err || 
-            synctype != g_last_synctype || carrier != g_last_carrier) {
+            synctype != g_last_synctype || carrier != g_last_carrier || heartbeat_due) {
+            s_sync_heartbeat = 0;
             
             // Check if we have sync (DMR or P25)
             bool hasSync = DSD_SYNC_IS_DMR(synctype) || DSD_SYNC_IS_P25(synctype);
@@ -1317,6 +1494,27 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStart(
         }
     }
     
+    apply_receive_options();
+
+    // Apply modulation: a "-m" token in custom args (Advanced Scan) wins over the per-site setting
+    {
+        int mode = g_mod_mode.load();
+        {
+            std::lock_guard<std::mutex> lock(g_custom_args_mutex);
+            if (!g_custom_args.empty()) {
+                int custom_mode = parse_custom_mod_token(g_custom_args);
+                if (custom_mode >= 0) mode = custom_mode;
+            }
+        }
+        apply_modulation_mode(mode);
+        if (g_opts) {
+            // Also echo to the decoder's stderr so it shows in the in-app Log tab
+            fprintf(stderr, "Pocket25: modulation %s (c4fm=%d qpsk=%d lock=%d)\n",
+                    mode == 2 ? "LSM/CQPSK" : mode == 1 ? "C4FM" : mode == 3 ? "GFSK" : "AUTO",
+                    g_opts->mod_c4fm, g_opts->mod_qpsk, g_opts->mod_cli_lock);
+        }
+    }
+
     if (g_opts && g_state) {
         // Log config before starting
         LOGI("Config: audio_in_dev=%s", g_opts->audio_in_dev);
@@ -1372,6 +1570,9 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStop(
     std::lock_guard<std::mutex> lifecycle_lock(g_engine_lifecycle_mutex);
     
     LOGI("Stopping DSD engine");
+
+    // Disarm P25-only sync; the trunked scanner re-arms it before each start.
+    g_p25_only.store(false);
     
     if (!g_engine_running.load()) {
         LOGI("Engine not running");
@@ -1624,6 +1825,20 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeGetFilterMode(
 /**
  * Set custom DSD command line arguments
  */
+/**
+ * Set per-site demodulation mode (0=Auto, 1=C4FM, 2=LSM/CQPSK). Takes effect at next nativeStart.
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetModulation(
+    JNIEnv* env,
+    jobject thiz,
+    jint mode) {
+    int m = (int)mode;
+    if (m < 0 || m > 2) m = 0;
+    g_mod_mode.store(m);
+    LOGI("Per-site modulation set to %d", m);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetCustomArgs(
     JNIEnv* env,
@@ -2051,6 +2266,9 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeStartHackRfMode(
     g_opts->mod_c4fm = 1;
     g_opts->mod_qpsk = 1;
     g_opts->mod_gfsk = 1;
+    // These are now the input path's own defaults: per-site "Auto" must keep them,
+    // so drop any snapshot taken before this reconfiguration (Pocket25 LSM patch).
+    g_mod_snapshot_valid = false;
     g_opts->frame_p25p1 = 1;
     g_opts->frame_p25p2 = 1;
     g_opts->frame_dmr = 1;
@@ -2272,6 +2490,71 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetBiasTee(
     }
     
     return JNI_TRUE;
+}
+
+/** Receive options (see apply_receive_options). Applied at the next engine start. */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetReceiveOptions(
+    JNIEnv* env, jobject thiz, jboolean autoPpm, jboolean fll, jboolean ted,
+    jboolean autoGain, jboolean bothSlots) {
+    g_rx_auto_ppm.store(autoPpm);
+    g_rx_fll.store(fll);
+    g_rx_ted.store(ted);
+    g_rx_auto_gain.store(autoGain);
+    g_rx_both_slots.store(bothSlots);
+    LOGI("Receive options: auto_ppm=%d fll=%d ted=%d auto_gain=%d both_slots=%d",
+         autoPpm, fll, ted, autoGain, bothSlots);
+}
+
+/** Repeat-visit cooldown in ms (0 = off). Takes effect immediately. */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetRevisitCooldown(
+    JNIEnv* env, jobject thiz, jint ms) {
+    g_revisit_cooldown_ms.store(ms < 0 ? 0 : (ms > 5000 ? 5000 : (int)ms));
+}
+
+/** Arm P25-only frame sync for the next engine start (cleared on stop). */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetP25Only(
+    JNIEnv* env, jobject thiz, jboolean enabled) {
+    g_p25_only.store(enabled);
+}
+
+/**
+ * Set priority talkgroups (Pocket25 LSM patch). Takes effect immediately.
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetPriorityTalkgroups(
+    JNIEnv* env,
+    jobject thiz,
+    jintArray talkgroups) {
+    std::lock_guard<std::mutex> lock(g_priority_mutex);
+    g_priority_talkgroups.clear();
+    if (talkgroups != nullptr) {
+        jsize len = env->GetArrayLength(talkgroups);
+        jint* tgs = env->GetIntArrayElements(talkgroups, nullptr);
+        for (jsize i = 0; i < len; i++) {
+            if (tgs[i] > 0) g_priority_talkgroups.insert(tgs[i]);
+        }
+        env->ReleaseIntArrayElements(talkgroups, tgs, JNI_ABORT);
+    }
+    LOGI("Priority talkgroups: %zu", g_priority_talkgroups.size());
+}
+
+/**
+ * Whether trunk following may tune to calls flagged encrypted (DSD-Neo
+ * opts->trunk_tune_enc_calls; DSD-Neo default 1). With 0, encrypted grants are
+ * skipped and calls found encrypted mid-stream are released (DSD-Neo enc lockout).
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetTuneEncryptedCalls(
+    JNIEnv* env,
+    jobject thiz,
+    jboolean enabled) {
+    if (g_opts) {
+        g_opts->trunk_tune_enc_calls = enabled ? 1 : 0;
+        LOGI("Trunk tune encrypted calls: %d", g_opts->trunk_tune_enc_calls);
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL

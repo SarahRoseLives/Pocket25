@@ -195,6 +195,14 @@ p25_lcw(dsd_opts* opts, dsd_state* state, uint8_t LCW_bits[], uint8_t irrecovera
                     state->last_active_time = time(NULL);
                 }
 
+                // Pocket25: a priority talkgroup announced here may interrupt this call
+                if (channel1 && group1) {
+                    p25_sm_priority_preempt(opts, state, channel1, group1);
+                }
+                if (channel2 && group2 && group1 != group2) {
+                    p25_sm_priority_preempt(opts, state, channel2, group2);
+                }
+
             }
 
             else if (lc_format == 0x44) {

@@ -8,6 +8,12 @@ class ScannerScreen extends StatelessWidget {
   final bool isRunning;
   final ScanningService scanningService;
   final Function(int talkgroup)? onToggleMute;
+  /// Stop whatever is running (system scan, Quick Scan, conventional, Advanced).
+  final Future<void> Function()? onStopScan;
+  /// Restart the last system scan (site).
+  final Future<void> Function()? onResumeScan;
+  /// Stop everything and close the app.
+  final Future<void> Function()? onExit;
 
   const ScannerScreen({
     super.key,
@@ -16,7 +22,27 @@ class ScannerScreen extends StatelessWidget {
     required this.isRunning,
     required this.scanningService,
     this.onToggleMute,
+    this.onStopScan,
+    this.onResumeScan,
+    this.onExit,
   });
+
+  Future<void> _confirmExit(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Exit Pocket25?'),
+        content: Text(isRunning
+            ? 'This stops scanning, releases the radio and closes the app.'
+            : 'This closes the app.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('EXIT')),
+        ],
+      ),
+    );
+    if (ok == true) await onExit?.call();
+  }
   
   /// Get color for protocol badge
   Color _getProtocolColor(String protocol) {
@@ -158,9 +184,98 @@ class ScannerScreen extends StatelessWidget {
                         ),
                       ],
                     ),
+                  // Stop / Resume control
+                  if (isRunning && onStopScan != null)
+                    Padding(
+                      padding: EdgeInsets.only(left: _spacing(context, 8)),
+                      child: TextButton.icon(
+                        onPressed: () => onStopScan!(),
+                        icon: Icon(Icons.stop, color: Colors.red[300], size: _iconSize(context, 20)),
+                        label: Text('STOP',
+                            style: TextStyle(color: Colors.red[300], fontSize: _fontSize(context, 14), fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(48, 40),
+                          padding: EdgeInsets.symmetric(horizontal: _spacing(context, 8)),
+                        ),
+                      ),
+                    )
+                  else if (!isRunning && onResumeScan != null && scanningService.canResumeLastSite)
+                    Flexible(
+                      child: TextButton.icon(
+                        onPressed: () => onResumeScan!(),
+                        icon: Icon(Icons.play_arrow, color: Colors.green[300], size: _iconSize(context, 20)),
+                        label: Text('RESUME ${scanningService.lastSiteName}',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: Colors.green[300], fontSize: _fontSize(context, 14), fontWeight: FontWeight.bold)),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(48, 40),
+                          padding: EdgeInsets.symmetric(horizontal: _spacing(context, 8)),
+                        ),
+                      ),
+                    ),
+                  if (onExit != null)
+                    IconButton(
+                      tooltip: 'Exit Pocket25',
+                      onPressed: () => _confirmExit(context),
+                      icon: Icon(Icons.power_settings_new, color: Colors.grey[400], size: _iconSize(context, 22)),
+                    ),
                 ],
               ),
               
+              // No control channel heard for a while (no-signal watchdog)
+              if (isRunning && scanningService.noSignalWarning != null) ...[
+                SizedBox(height: _spacing(context, 12)),
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(_spacing(context, 12)),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.15),
+                    border: Border.all(color: Colors.orange[300]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.signal_cellular_off, color: Colors.orange[300], size: _iconSize(context, 24)),
+                      SizedBox(width: _spacing(context, 10)),
+                      Expanded(
+                        child: Text(
+                          scanningService.noSignalWarning!,
+                          style: TextStyle(color: Colors.orange[200], fontSize: _fontSize(context, 14)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // No radio found when the scan tried to start
+              if (!isRunning &&
+                  scanningService.state == ScanningState.error &&
+                  scanningService.deviceError != null) ...[
+                SizedBox(height: _spacing(context, 12)),
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(_spacing(context, 12)),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.15),
+                    border: Border.all(color: Colors.red[300]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.usb_off, color: Colors.red[300], size: _iconSize(context, 24)),
+                      SizedBox(width: _spacing(context, 10)),
+                      Expanded(
+                        child: Text(
+                          scanningService.deviceError!,
+                          style: TextStyle(color: Colors.red[200], fontSize: _fontSize(context, 14)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
               if (isRunning) ...[
                 SizedBox(height: _spacing(context, 12)),
                 Divider(color: Colors.grey[700], height: 1),
@@ -217,12 +332,21 @@ class ScannerScreen extends StatelessWidget {
                         ),
                         if (scanningService.isP25 && scanningService.tsbkCount > 0) ...[
                           SizedBox(width: _spacing(context, 12)),
-                          _buildCompactInfoRow(
-                            Icons.swap_vert,
-                            'BER: ${scanningService.ber.toStringAsFixed(1)}%',
-                            Colors.teal,
-                            context,
-                          ),
+                          // Decode quality over the last ~10 s (falls back to the session
+                          // average until there is enough recent data)
+                          Builder(builder: (context) {
+                            final recent = scanningService.recentBer;
+                            final ber = recent ?? scanningService.ber;
+                            final color = ber < 2 ? Colors.green : (ber < 10 ? Colors.orange : Colors.red);
+                            return _buildCompactInfoRow(
+                              Icons.swap_vert,
+                              recent != null
+                                  ? 'BER 10s: ${ber.toStringAsFixed(1)}%'
+                                  : 'BER: ${ber.toStringAsFixed(1)}%',
+                              color,
+                              context,
+                            );
+                          }),
                         ],
                       ],
                     ),

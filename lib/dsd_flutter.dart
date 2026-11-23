@@ -266,6 +266,40 @@ class DsdFlutter {
   Future<void> setCustomArgs(String args) {
     return DsdFlutterPlatform.instance.setCustomArgs(args);
   }
+
+  /// Set the demodulation mode used at the next engine start.
+  /// 0 = Auto, 1 = C4FM, 2 = LSM (CQPSK, P25 Phase 1 simulcast).
+  Future<void> setModulation(int mode) {
+    return DsdFlutterPlatform.instance.setModulation(mode);
+  }
+
+  /// Receive options, applied at the next engine start.
+  Future<void> setReceiveOptions({bool autoPpm = false, bool fll = false, bool ted = false,
+      bool autoGain = false, bool bothSlots = false}) {
+    return DsdFlutterPlatform.instance.setReceiveOptions(
+        autoPpm: autoPpm, fll: fll, ted: ted, autoGain: autoGain, bothSlots: bothSlots);
+  }
+
+  /// Repeat-visit cooldown in ms (0 = off): after a call ends, ignore new
+  /// announcements of the same talkgroup on the same channel for this long.
+  Future<void> setRevisitCooldown(int ms) {
+    return DsdFlutterPlatform.instance.setRevisitCooldown(ms);
+  }
+
+  /// P25-only frame sync for the next engine start (cleared when the engine stops).
+  Future<void> setP25Only(bool enabled) {
+    return DsdFlutterPlatform.instance.setP25Only(enabled);
+  }
+
+  /// Priority talkgroups: a call on one of these interrupts any other call.
+  Future<void> setPriorityTalkgroups(List<int> talkgroups) {
+    return DsdFlutterPlatform.instance.setPriorityTalkgroups(talkgroups);
+  }
+
+  /// Allow (true, default) or skip (false) tuning to encrypted calls.
+  Future<void> setTuneEncryptedCalls(bool enabled) {
+    return DsdFlutterPlatform.instance.setTuneEncryptedCalls(enabled);
+  }
   
   /// Freeze/unfreeze auto-retune during system switching
   /// 

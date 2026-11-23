@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class LogScreen extends StatelessWidget {
   final List<String> logLines;
@@ -23,12 +24,62 @@ class LogScreen extends StatelessWidget {
     return Colors.green;
   }
 
+  static const MethodChannel _filesChannel = MethodChannel('pocket25/files');
+
+  /// Save the log as Download/Pocket25/pocket25-log-YYYYMMDD-HHMMSS.txt
+  Future<void> _saveToDownloads(BuildContext context) async {
+    final t = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final name = 'pocket25-log-${t.year}${two(t.month)}${two(t.day)}-'
+        '${two(t.hour)}${two(t.minute)}${two(t.second)}.txt';
+    String message;
+    try {
+      final path = await _filesChannel.invokeMethod<String>(
+          'saveTextToDownloads', {'fileName': name, 'text': logLines.join('\n')});
+      message = 'Saved ${logLines.length} lines to ${path ?? name}';
+    } on PlatformException catch (e) {
+      message = 'Save failed: ${e.message ?? e.code}';
+    } catch (e) {
+      message = 'Save failed: $e';
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
+      );
+    }
+  }
+
+  /// Copy the whole log so it can be pasted into an email, note, or bug report.
+  Future<void> _copyAll(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: logLines.join('\n')));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Copied ${logLines.length} log lines'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('DSD Log'),
         backgroundColor: Colors.blueGrey[900],
+        actions: [
+          IconButton(
+            tooltip: 'Save to Downloads',
+            icon: const Icon(Icons.save_alt),
+            onPressed: logLines.isEmpty ? null : () => _saveToDownloads(context),
+          ),
+          IconButton(
+            tooltip: 'Copy all',
+            icon: const Icon(Icons.copy_all),
+            onPressed: logLines.isEmpty ? null : () => _copyAll(context),
+          ),
+        ],
       ),
       body: Container(
         color: Colors.black,

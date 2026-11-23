@@ -1059,7 +1059,11 @@ static int
 verbose_ppm_set(rtlsdr_dev_t* dev, int ppm_error) {
     int r;
     r = rtlsdr_set_freq_correction(dev, ppm_error);
-    if (r < 0) {
+    if (r == -2) {
+        /* librtlsdr returns -2 when the requested correction equals the current one:
+         * nothing to change, not a failure. Return value left as-is for callers. */
+        fprintf(stderr, "Tuner error already %i ppm (unchanged).\n", ppm_error);
+    } else if (r < 0) {
         fprintf(stderr, "WARNING: Failed to set ppm error.\n");
     } else {
         fprintf(stderr, "Tuner error set to %i ppm.\n", ppm_error);
