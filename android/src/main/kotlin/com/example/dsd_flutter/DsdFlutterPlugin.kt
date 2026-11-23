@@ -350,8 +350,11 @@ class DsdFlutterPlugin :
     private external fun nativeResetP25State()
     private external fun nativeSetBiasTee(enabled: Boolean): Boolean
     private external fun nativeSetTrunkFollowing(enabled: Boolean)
+    private external fun nativeSetTuneEncryptedCalls(enabled: Boolean)
+    private external fun nativeSetPriorityTalkgroups(talkgroups: IntArray?)
     private external fun nativeSetReceiveOptions(autoPpm: Boolean, fll: Boolean, ted: Boolean, autoGain: Boolean, bothSlots: Boolean)
     private external fun nativeSetP25Only(enabled: Boolean)
+    private external fun nativeSetRevisitCooldown(ms: Int)
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
@@ -677,8 +680,22 @@ class DsdFlutterPlugin :
                     call.argument<Boolean>("bothSlots") ?: false)
                 result.success(null)
             }
+            "setRevisitCooldown" -> {
+                nativeSetRevisitCooldown(call.argument<Int>("ms") ?: 0)
+                result.success(null)
+            }
             "setP25Only" -> {
                 nativeSetP25Only(call.argument<Boolean>("enabled") ?: false)
+                result.success(null)
+            }
+            "setPriorityTalkgroups" -> {
+                val talkgroups = call.argument<List<Int>>("talkgroups")
+                nativeSetPriorityTalkgroups(talkgroups?.toIntArray())
+                result.success(null)
+            }
+            "setTuneEncryptedCalls" -> {
+                val enabled = call.argument<Boolean>("enabled") ?: true
+                nativeSetTuneEncryptedCalls(enabled)
                 result.success(null)
             }
             "setTrunkFollowing" -> {

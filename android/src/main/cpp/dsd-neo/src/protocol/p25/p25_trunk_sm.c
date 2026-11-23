@@ -168,6 +168,14 @@ tg_is_blocked(const dsd_state* state, int tg) {
 extern int dsd_flutter_should_follow_tg(int tg);
 /* Pocket25: true while the app has frozen retunes (engine start / CC switch). */
 extern _Bool dsd_flutter_retune_frozen(void);
+/* Pocket25: priority talkgroups set from the app's Scan Grid. */
+extern int dsd_flutter_is_priority_tg(int tg);
+/* Pocket25: repeat-visit cooldown in ms (0 = off), set from the app. */
+extern int dsd_flutter_revisit_cooldown_ms(void);
+/* Pocket25: last call we left, for the repeat-visit cooldown. */
+static int g_p25_last_rel_tg = 0;
+static long g_p25_last_rel_freq = 0;
+static double g_p25_last_rel_m = 0.0;
 
 static int
 grant_allowed(dsd_opts* opts, dsd_state* state, const p25_sm_event_t* ev) {
@@ -270,6 +278,18 @@ handle_grant(p25_sm_ctx_t* ctx, dsd_opts* opts, dsd_state* state, const p25_sm_e
     if (freq == 0) {
         sm_log(opts, state, "grant-no-freq");
         return;
+    }
+
+    // Pocket25: repeat-visit cooldown. Right after a call ends, the control
+    // channel keeps announcing it for a moment (hang time). Going back finds
+    // only end-of-call frames and costs ~1 s. If enabled, ignore an
+    // announcement for the same talkgroup on the same channel for a short time.
+    if (ctx->state != P25_SM_TUNED && ev->tg > 0 && ev->tg == g_p25_last_rel_tg && freq == g_p25_last_rel_freq) {
+        int cool_ms = dsd_flutter_revisit_cooldown_ms();
+        if (cool_ms > 0 && (now_monotonic() - g_p25_last_rel_m) * 1000.0 < (double)cool_ms) {
+            sm_log(opts, state, "grant-cooldown-recent-call");
+            return;
+        }
     }
 
     // Skip if already tuned to same frequency AND same TG (avoid bounce on duplicate grants)
@@ -569,6 +589,13 @@ do_release(p25_sm_ctx_t* ctx, dsd_opts* opts, dsd_state* state, const char* reas
         }
         atomic_store(&g_p25_sm_release_lock, 0);
         return;
+    }
+
+    // Pocket25: remember the call we're leaving (repeat-visit cooldown).
+    if (ctx->vc_tg > 0 && ctx->vc_freq_hz != 0) {
+        g_p25_last_rel_tg = ctx->vc_tg;
+        g_p25_last_rel_freq = ctx->vc_freq_hz;
+        g_p25_last_rel_m = now_monotonic();
     }
 
     // Clear any pending forced-release request; we're handling teardown now.
@@ -987,6 +1014,35 @@ p25_sm_get_ctx(void) {
         g_sm_initialized = 1;
     }
     return &g_sm_ctx;
+}
+
+/* Pocket25: priority preemption. Called when a voice channel's link control
+ * announces another active call (Group Voice Channel Update). If that call is
+ * on a priority talkgroup and the call we're on is not, switch to it. A
+ * priority call is never interrupted by another priority call. The normal
+ * grant checks (talkgroup filter, encryption, retune freeze) still apply. */
+void
+p25_sm_priority_preempt(dsd_opts* opts, dsd_state* state, int channel, int tg) {
+    if (!opts || !state || opts->p25_trunk != 1 || state->p25_cc_freq == 0 || channel == 0 || tg <= 0) {
+        return;
+    }
+    p25_sm_ctx_t* ctx = p25_sm_get_ctx();
+    if (ctx->state != P25_SM_TUNED || tg == ctx->vc_tg) {
+        return;
+    }
+    if (!dsd_flutter_is_priority_tg(tg) || dsd_flutter_is_priority_tg(ctx->vc_tg)) {
+        return;
+    }
+    long freq = process_channel_to_freq(opts, state, channel);
+    if (freq == 0 || freq == ctx->vc_freq_hz) {
+        return;
+    }
+    p25_sm_event_t ev = p25_sm_ev_group_grant(channel, freq, tg, 0, 0);
+    if (!grant_allowed(opts, state, &ev)) {
+        return;
+    }
+    sm_log(opts, state, "priority-preempt");
+    handle_grant(ctx, opts, state, &ev);
 }
 
 /* ============================================================================

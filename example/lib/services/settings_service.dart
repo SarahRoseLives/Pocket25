@@ -17,6 +17,9 @@ class SettingsService extends ChangeNotifier {
   int _ppm = 0;
   int _sampleRate = 1536000;  // 1.536 MSPS - matches DSD rtl_tcp default
   bool _biasTee = false; // Bias-T enable for RTL-SDR
+  // Trunked call following (both off by default = original Pocket25 behavior)
+  bool _skipEncryptedCalls = false; // don't tune to calls flagged encrypted
+  bool _followSelectedOnly = false; // only tune to the system's talkgroups that aren't muted
   // Receive options (ported from ClayF/Pocket25 cqpsk-lsm-mode). Defaults keep
   // the original behavior, except P25-only sync during system scans.
   bool _rxAutoPpm = false;   // automatic PPM drift correction
@@ -25,6 +28,7 @@ class SettingsService extends ChangeNotifier {
   bool _rxTed = false;       // symbol timing recovery (C4FM)
   bool _rxBothSlots = false; // play both TDMA slots (P25 Phase 2 / DMR)
   bool _p25OnlySync = true;  // system scans listen for P25 sync only
+  bool _revisitCooldown = false;   // skip re-joining a call that just ended (~1.5 s)
   bool _noSignalRestart = false;   // restart the radio once after 3 min with no control channel
   
   // Native USB state (RTL-SDR)
@@ -54,12 +58,15 @@ class SettingsService extends ChangeNotifier {
     _gain = prefs.getInt('sdr_gain') ?? _gain;
     _ppm = prefs.getInt('sdr_ppm') ?? _ppm;
     _biasTee = prefs.getBool('sdr_bias_tee') ?? _biasTee;
+    _skipEncryptedCalls = prefs.getBool('trunk_skip_encrypted') ?? _skipEncryptedCalls;
+    _followSelectedOnly = prefs.getBool('trunk_follow_selected_only') ?? _followSelectedOnly;
     _rxAutoPpm = prefs.getBool('rx_auto_ppm') ?? _rxAutoPpm;
     _rxAutoGain = prefs.getBool('rx_auto_gain') ?? _rxAutoGain;
     _rxFll = prefs.getBool('rx_fll') ?? _rxFll;
     _rxTed = prefs.getBool('rx_ted') ?? _rxTed;
     _rxBothSlots = prefs.getBool('rx_both_slots') ?? _rxBothSlots;
     _p25OnlySync = prefs.getBool('rx_p25_only_sync') ?? _p25OnlySync;
+    _revisitCooldown = prefs.getBool('trunk_revisit_cooldown') ?? _revisitCooldown;
     _noSignalRestart = prefs.getBool('no_signal_restart') ?? _noSignalRestart;
     _hackrfLnaGain = prefs.getInt('sdr_hackrf_lna_gain') ?? _hackrfLnaGain;
     _hackrfVgaGain = prefs.getInt('sdr_hackrf_vga_gain') ?? _hackrfVgaGain;
@@ -79,12 +86,15 @@ class SettingsService extends ChangeNotifier {
     await prefs.setInt('sdr_gain', _gain);
     await prefs.setInt('sdr_ppm', _ppm);
     await prefs.setBool('sdr_bias_tee', _biasTee);
+    await prefs.setBool('trunk_skip_encrypted', _skipEncryptedCalls);
+    await prefs.setBool('trunk_follow_selected_only', _followSelectedOnly);
     await prefs.setBool('rx_auto_ppm', _rxAutoPpm);
     await prefs.setBool('rx_auto_gain', _rxAutoGain);
     await prefs.setBool('rx_fll', _rxFll);
     await prefs.setBool('rx_ted', _rxTed);
     await prefs.setBool('rx_both_slots', _rxBothSlots);
     await prefs.setBool('rx_p25_only_sync', _p25OnlySync);
+    await prefs.setBool('trunk_revisit_cooldown', _revisitCooldown);
     await prefs.setBool('no_signal_restart', _noSignalRestart);
     await prefs.setInt('sdr_hackrf_lna_gain', _hackrfLnaGain);
     await prefs.setInt('sdr_hackrf_vga_gain', _hackrfVgaGain);
@@ -103,12 +113,17 @@ class SettingsService extends ChangeNotifier {
   int get ppm => _ppm;
   int get sampleRate => _sampleRate;
   bool get biasTee => _biasTee;
+  bool get skipEncryptedCalls => _skipEncryptedCalls;
+  bool get followSelectedOnly => _followSelectedOnly;
   bool get rxAutoPpm => _rxAutoPpm;
   bool get rxAutoGain => _rxAutoGain;
   bool get rxFll => _rxFll;
   bool get rxTed => _rxTed;
   bool get rxBothSlots => _rxBothSlots;
   bool get p25OnlySync => _p25OnlySync;
+  bool get revisitCooldown => _revisitCooldown;
+  /// Cooldown sent to the decoder, in ms (0 = off).
+  int get revisitCooldownMs => _revisitCooldown ? 1500 : 0;
   bool get noSignalRestart => _noSignalRestart;
   int get nativeUsbFd => _nativeUsbFd;
   String get nativeUsbPath => _nativeUsbPath;
@@ -172,6 +187,12 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updateSkipEncryptedCalls(bool value) {
+    _skipEncryptedCalls = value;
+    _saveSettings();
+    notifyListeners();
+  }
+
   /// Update one or more receive options (null = unchanged).
   void updateReceiveOptions({bool? autoPpm, bool? autoGain, bool? fll, bool? ted,
       bool? bothSlots, bool? p25OnlySync}) {
@@ -185,8 +206,20 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updateRevisitCooldown(bool value) {
+    _revisitCooldown = value;
+    _saveSettings();
+    notifyListeners();
+  }
+
   void updateNoSignalRestart(bool value) {
     _noSignalRestart = value;
+    _saveSettings();
+    notifyListeners();
+  }
+
+  void updateFollowSelectedOnly(bool value) {
+    _followSelectedOnly = value;
     _saveSettings();
     notifyListeners();
   }

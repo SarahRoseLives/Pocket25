@@ -331,8 +331,26 @@ class _SdrSettingsScreenState extends State<SdrSettingsScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Options for trunked system scans.',
+                      'The phone follows one voice call at a time. These keep it off calls you can\'t or don\'t want to hear. Takes effect at the next scan start.',
                       style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Skip encrypted calls'),
+                      subtitle: const Text('Don\'t tune to calls flagged encrypted (they can\'t be decoded)'),
+                      value: widget.settings.skipEncryptedCalls,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateSkipEncryptedCalls(value);
+                      },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Don\'t re-join a call that just ended'),
+                      subtitle: const Text('For 1.5 s after a call ends, ignore repeat announcements of it (saves ~1 s per call; a very quick reply may be joined late)'),
+                      value: widget.settings.revisitCooldown,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateRevisitCooldown(value);
+                      },
                     ),
                     SwitchListTile(
                       title: const Text('Restart the radio if nothing is heard for 3 min'),
@@ -341,6 +359,15 @@ class _SdrSettingsScreenState extends State<SdrSettingsScreen> {
                       onChanged: (value) {
                         setState(() {});
                         widget.settings.updateNoSignalRestart(value);
+                      },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Follow my talkgroups only'),
+                      subtitle: const Text('Only tune to this system\'s talkgroups that aren\'t muted in Scan Grid. Off = follow everything except muted talkgroups.'),
+                      value: widget.settings.followSelectedOnly,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateFollowSelectedOnly(value);
                       },
                     ),
                   ],

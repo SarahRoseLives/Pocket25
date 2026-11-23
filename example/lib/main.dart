@@ -100,6 +100,10 @@ class _MainScreenState extends State<MainScreen> {
     _listenToSiteEvents();
     _startCallTimeoutTimer();
     _initializeFilters();
+    // Repeat-visit cooldown applies immediately when toggled in SDR Settings
+    _settingsService.addListener(() {
+      _dsdFlutterPlugin.setRevisitCooldown(_settingsService.revisitCooldownMs).catchError((_) {});
+    });
     _scanningService.addListener(_onScanningServiceChanged);
     _scanningService.onLog = (line) {
       if (!mounted) return;
@@ -232,20 +236,99 @@ class _MainScreenState extends State<MainScreen> {
     _filterSyncTimer = Timer(const Duration(milliseconds: 300), () async {
       if (_filterSyncPending) {
         _filterSyncPending = false;
-        try {
-          await _dsdFlutterPlugin.setFilterTalkgroups(_mutedTalkgroups.toList());
-        } catch (e) {
-          debugPrint('Error syncing filter to native: $e');
-        }
+        await _applyCallFollowingFilter();
       }
     });
   }
 
-  ScanningState? _lastScanState;
+  /// Push the talkgroup filter to native. The same filter decides both which
+  /// grants are followed and which audio is muted.
+  /// - Default (original behavior): blacklist = talkgroups muted in Scan Grid.
+  /// - "Follow my talkgroups only" during a system scan: whitelist = this
+  ///   system's talkgroups minus muted ones. If that list would be empty, fall
+  ///   back to the blacklist so the scanner never goes silent by accident.
+  /// Applies the filter and priority talkgroups, and notes any change in the log.
+  Future<void> _applyCallFollowingFilter() async {
+    final before = _filterDesc;
+    await _applyTalkgroupFilter();
+    await _applyPriorityTalkgroups();
+    if (_logSessionOpen && before != 'not yet applied' && before != _filterDesc && mounted) {
+      setState(() => _logLines.add('[cfg] Talkgroup filter changed: $_filterDesc'));
+    }
+  }
 
-  /// Reacts to scan state changes (session log footer, Scanner screen redraw).
+  // ---- Priority talkgroups (★ in Scan Grid) --------------------------------
+  Set<int> _priorityTalkgroups = {};
+
+  String get _priorityDesc => _priorityTalkgroups.isEmpty
+      ? 'none'
+      : (_priorityTalkgroups.toList()..sort()).join(', ');
+
+  /// Loads the current system's ★ talkgroups from the database and sends them
+  /// to the decoder. Priority applies only during a system scan.
+  Future<void> _applyPriorityTalkgroups() async {
+    try {
+      final systemId = _scanningService.currentSystemId;
+      final tgs = systemId != null ? await _db.getPriorityTalkgroups(systemId) : <int>{};
+      _priorityTalkgroups = tgs;
+      await _dsdFlutterPlugin.setPriorityTalkgroups(tgs.toList());
+    } catch (e) {
+      debugPrint('Error syncing priority talkgroups: $e');
+    }
+  }
+
+  /// Scan Grid long-press changed the ★ set: apply now and note it in the log.
+  Future<void> _onPriorityTalkgroupsChanged(Set<int> tgs) async {
+    _priorityTalkgroups = Set<int>.from(tgs);
+    try {
+      await _dsdFlutterPlugin.setPriorityTalkgroups(_priorityTalkgroups.toList());
+    } catch (e) {
+      debugPrint('Error syncing priority talkgroups: $e');
+    }
+    if (_logSessionOpen && mounted) {
+      setState(() => _logLines.add('[cfg] Priority talkgroups changed: $_priorityDesc'));
+    }
+  }
+
+  Future<void> _applyTalkgroupFilter() async {
+    try {
+      final systemId = _scanningService.currentSystemId;
+      if (_settingsService.followSelectedOnly && systemId != null) {
+        final rows = await _db.getTalkgroups(systemId);
+        final allowed = rows
+            .map((r) => r['tg_decimal'])
+            .whereType<int>()
+            .where((tg) => !_mutedTalkgroups.contains(tg))
+            .toList();
+        if (allowed.isNotEmpty) {
+          await _dsdFlutterPlugin.setFilterMode(1); // whitelist
+          await _dsdFlutterPlugin.setFilterTalkgroups(allowed);
+          _filterDesc = 'allow list ${allowed.length} TGs: ${allowed.take(30).join(', ')}'
+              '${allowed.length > 30 ? ', …' : ''}';
+          return;
+        }
+      }
+      await _dsdFlutterPlugin.setFilterMode(2); // blacklist (original)
+      await _dsdFlutterPlugin.setFilterTalkgroups(_mutedTalkgroups.toList());
+      _filterDesc = _mutedTalkgroups.isEmpty
+          ? 'none (follow all talkgroups)'
+          : 'mute list ${_mutedTalkgroups.length} TGs: ${_mutedTalkgroups.take(30).join(', ')}';
+    } catch (e) {
+      debugPrint('Error syncing filter to native: $e');
+    }
+  }
+
+  ScanningState? _lastScanState;
+  int? _lastFilterSystemId;
+
+  /// Re-apply call-following settings whenever a scan starts or the system
+  /// changes (e.g. GPS site hopping to another system).
   void _onScanningServiceChanged() {
     final st = _scanningService.state;
+    final sys = _scanningService.currentSystemId;
+    final started = st == ScanningState.searching && _lastScanState != ScanningState.searching &&
+        _lastScanState != ScanningState.locked;
+    final systemChanged = sys != _lastFilterSystemId;
     final wasSystemActive = _lastScanState == ScanningState.searching ||
         _lastScanState == ScanningState.locked ||
         _lastScanState == ScanningState.stopping;
@@ -260,6 +343,11 @@ class _MainScreenState extends State<MainScreen> {
       setState(() {});
     }
     _lastScanState = st;
+    _lastFilterSystemId = sys;
+    if (started || systemChanged) {
+      _dsdFlutterPlugin.setTuneEncryptedCalls(!_settingsService.skipEncryptedCalls);
+      _applyCallFollowingFilter();
+    }
   }
   
   Future<void> _toggleMute(int talkgroup) async {
@@ -451,6 +539,7 @@ class _MainScreenState extends State<MainScreen> {
   bool _logSessionOpen = false;
   bool _logSessionIsSystem = false;
   DateTime? _logSessionStart;
+  String _filterDesc = 'not yet applied';
 
   String _two(int v) => v.toString().padLeft(2, '0');
   String _stamp(DateTime t) =>
@@ -489,8 +578,13 @@ class _MainScreenState extends State<MainScreen> {
     }
     lines.add('[cfg] SDR: source=${st.rtlSource.name} gain=${st.gain} ppm=${st.ppm}'
         ' bias-T=${st.biasTee ? 'on' : 'off'} sample rate=${st.sampleRate}');
-    lines.add('[cfg] Muted in Scan Grid: ${_mutedTalkgroups.length}');
-    lines.add('[cfg] Restart radio after 3 min silence: ${_settingsService.noSignalRestart ? 'ON' : 'off'}');
+    lines.add('[cfg] Call following: skip encrypted=${st.skipEncryptedCalls ? 'ON' : 'off'}'
+        ' | my talkgroups only=${st.followSelectedOnly ? 'ON' : 'off'}'
+        ' | muted in Scan Grid: ${_mutedTalkgroups.length}');
+    lines.add('[cfg] Talkgroup filter: $_filterDesc');
+    lines.add('[cfg] Priority talkgroups: $_priorityDesc');
+    lines.add('[cfg] Repeat-visit cooldown: ${_settingsService.revisitCooldown ? 'ON (1.5 s)' : 'off'}'
+        ' | restart radio after 3 min silence: ${_settingsService.noSignalRestart ? 'ON' : 'off'}');
     lines.add('[cfg] Receive: auto PPM=${_settingsService.rxAutoPpm ? 'ON' : 'off'}'
         ' | auto gain=${_settingsService.rxAutoGain ? 'ON' : 'off'}'
         ' | FLL=${_settingsService.rxFll ? 'ON' : 'off'} | TED=${_settingsService.rxTed ? 'ON' : 'off'}'
@@ -557,6 +651,7 @@ class _MainScreenState extends State<MainScreen> {
         autoGain: _settingsService.rxAutoGain,
         bothSlots: _settingsService.rxBothSlots,
       );
+      await _dsdFlutterPlugin.setRevisitCooldown(_settingsService.revisitCooldownMs);
     } catch (_) {}
     try {
       setState(() {
@@ -630,6 +725,7 @@ class _MainScreenState extends State<MainScreen> {
         return ScanGridScreen(
           scanningService: _scanningService,
           initialMutedTalkgroups: _mutedTalkgroups,
+          onPriorityTalkgroupsChanged: _onPriorityTalkgroupsChanged,
           onMutedTalkgroupsChanged: (mutedTalkgroups) {
             // Update our local muted set and sync to native
             _mutedTalkgroups.clear();

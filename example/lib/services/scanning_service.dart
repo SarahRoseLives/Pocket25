@@ -671,6 +671,7 @@ class ScanningService extends ChangeNotifier {
         bothSlots: _settingsService.rxBothSlots,
       );
       await _dsdPlugin.setP25Only(_settingsService.p25OnlySync);
+      await _dsdPlugin.setRevisitCooldown(_settingsService.revisitCooldownMs);
     } catch (e) {
       if (kDebugMode) print('Receive options not applied: $e');
     }

@@ -26,7 +26,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE systems (
@@ -68,6 +68,7 @@ class DatabaseService {
             tg_category TEXT,
             tg_tag TEXT,
             filter_status INTEGER DEFAULT 0,
+            priority INTEGER DEFAULT 0,
             FOREIGN KEY (system_id) REFERENCES systems (system_id) ON DELETE CASCADE
           )
         ''');
@@ -251,6 +252,12 @@ class DatabaseService {
             ALTER TABLE sites ADD COLUMN modulation TEXT DEFAULT 'auto'
           ''');
         }
+        if (oldVersion < 6) {
+          // Priority talkgroups (interrupt other calls), set from the Scan Grid
+          await db.execute('''
+            ALTER TABLE talkgroups ADD COLUMN priority INTEGER DEFAULT 0
+          ''');
+        }
       },
     );
   }
@@ -290,6 +297,20 @@ class DatabaseService {
     final db = await database;
     await db.update('sites', {'modulation': normalizeModulation(modulation)},
         where: 'site_id = ?', whereArgs: [siteId]);
+  }
+
+  /// Talkgroups marked priority for a system (Pocket25 LSM patch).
+  Future<Set<int>> getPriorityTalkgroups(int systemId) async {
+    final db = await database;
+    final rows = await db.query('talkgroups',
+        columns: ['tg_decimal'], where: 'system_id = ? AND priority = 1', whereArgs: [systemId]);
+    return rows.map((r) => r['tg_decimal']).whereType<int>().toSet();
+  }
+
+  Future<void> setTalkgroupPriority(int systemId, int tgDecimal, bool priority) async {
+    final db = await database;
+    await db.update('talkgroups', {'priority': priority ? 1 : 0},
+        where: 'system_id = ? AND tg_decimal = ?', whereArgs: [systemId, tgDecimal]);
   }
 
   Future<void> insertSystem(int systemId, String systemName) async {

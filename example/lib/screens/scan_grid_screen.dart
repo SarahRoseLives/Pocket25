@@ -5,6 +5,8 @@ import '../services/scanning_service.dart';
 class ScanGridScreen extends StatefulWidget {
   final ScanningService scanningService;
   final Function(Set<int>) onMutedTalkgroupsChanged;
+  /// Called after a long-press changes the priority (★) talkgroups.
+  final Function(Set<int>)? onPriorityTalkgroupsChanged;
   final Set<int> initialMutedTalkgroups;
 
   const ScanGridScreen({
@@ -12,6 +14,7 @@ class ScanGridScreen extends StatefulWidget {
     required this.scanningService,
     required this.onMutedTalkgroupsChanged,
     required this.initialMutedTalkgroups,
+    this.onPriorityTalkgroupsChanged,
   });
 
   @override
@@ -23,6 +26,7 @@ class _ScanGridScreenState extends State<ScanGridScreen> {
   List<Map<String, dynamic>> _allTalkgroups = [];
   List<List<Map<String, dynamic>>> _talkgroupPages = [];
   Set<int> _mutedTalkgroups = {};
+  Set<int> _priorityTalkgroups = {}; // ★ priority, saved in the database
   int _currentPage = 0;
   bool _isLoading = true;
   String? _systemName;
@@ -65,6 +69,7 @@ class _ScanGridScreenState extends State<ScanGridScreen> {
       _systemName = system['system_name'] as String;
 
       // Get categories for this system
+      _priorityTalkgroups = await _db.getPriorityTalkgroups(systemId);
       final categories = await _db.getTalkgroupCategories(systemId);
       
       // Get talkgroups (filtered by category if selected)
@@ -138,6 +143,31 @@ class _ScanGridScreenState extends State<ScanGridScreen> {
       }
     });
     widget.onMutedTalkgroupsChanged(_mutedTalkgroups);
+  }
+
+  /// Long-press: toggle priority (★). A priority call interrupts other calls.
+  Future<void> _togglePriority(int tgDecimal) async {
+    final systemId = widget.scanningService.currentSystemId;
+    if (systemId == null) return;
+    final makePriority = !_priorityTalkgroups.contains(tgDecimal);
+    setState(() {
+      if (makePriority) {
+        _priorityTalkgroups.add(tgDecimal);
+      } else {
+        _priorityTalkgroups.remove(tgDecimal);
+      }
+    });
+    await _db.setTalkgroupPriority(systemId, tgDecimal, makePriority);
+    widget.onPriorityTalkgroupsChanged?.call(Set<int>.from(_priorityTalkgroups));
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(makePriority
+            ? '★ $tgDecimal is now priority: it interrupts other calls'
+            : '$tgDecimal is no longer priority'),
+        duration: const Duration(seconds: 2),
+      ));
+    }
   }
 
   void _muteAll() {
@@ -243,15 +273,20 @@ class _ScanGridScreenState extends State<ScanGridScreen> {
                 final tgDecimal = tg['tg_decimal'] as int;
                 final tgName = tg['tg_name'] as String;
                 final isEnabled = !_mutedTalkgroups.contains(tgDecimal);
+                final isPriority = _priorityTalkgroups.contains(tgDecimal);
 
                 return GestureDetector(
                   onTap: () => _toggleTalkgroup(tgDecimal),
+                  onLongPress: () => _togglePriority(tgDecimal),
                   child: Card(
                     color: isEnabled
                         ? Colors.green[600]
                         : const Color(0xFF424242),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
+                      side: isPriority
+                          ? BorderSide(color: Colors.amber[400]!, width: 3)
+                          : BorderSide.none,
                     ),
                     elevation: isEnabled ? 3 : 1,
                     child: Padding(
@@ -274,10 +309,11 @@ class _ScanGridScreenState extends State<ScanGridScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '$tgDecimal',
-                            style: const TextStyle(
-                              color: Colors.white70,
+                            isPriority ? '★ $tgDecimal' : '$tgDecimal',
+                            style: TextStyle(
+                              color: isPriority ? Colors.amber[200] : Colors.white70,
                               fontSize: 12,
+                              fontWeight: isPriority ? FontWeight.bold : FontWeight.normal,
                             ),
                           ),
                         ],
@@ -365,7 +401,8 @@ class _ScanGridScreenState extends State<ScanGridScreen> {
                     ),
                   ),
                   Text(
-                    '${_mutedTalkgroups.length} muted',
+                    '${_mutedTalkgroups.length} muted'
+                    '${_priorityTalkgroups.isNotEmpty ? ' · ★${_priorityTalkgroups.length}' : ''}',
                     style: TextStyle(
                       color: Colors.grey[400],
                       fontSize: 12,

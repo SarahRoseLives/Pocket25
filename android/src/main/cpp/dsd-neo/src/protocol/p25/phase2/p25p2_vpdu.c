@@ -426,7 +426,9 @@ process_MAC_VPDU(dsd_opts* opts, dsd_state* state, int type, unsigned long long 
                             goto SKIPCALL;
                         }
                         p25p2_mac_handle(&mac_res, opts, state, tunable_chan, /*svc_bits*/ 0, tunable_group, /*src*/ 0);
-                        j = 8; //break loop
+                        if (opts->p25_is_tuned) {
+                            j = 8; //break loop (only if a candidate was actually tuned)
+                        }
                     }
                 }
                 //if playing back files, and we still want to see what freqs are in use in the ncurses terminal
@@ -1134,7 +1136,9 @@ process_MAC_VPDU(dsd_opts* opts, dsd_state* state, int type, unsigned long long 
                     if (state->p25_cc_freq != 0 && opts->p25_is_tuned == 0 && tunable_freq != 0) {
                         int svc_bits = (j == 0) ? so1 : ((j == 1) ? so2 : so3);
                         p25p2_mac_handle(&mac_res, opts, state, tunable_chan, svc_bits, tunable_group, /*src*/ 0);
-                        j = 8; //break loop after tuning one candidate
+                        if (opts->p25_is_tuned) {
+                            j = 8; //break loop after tuning one candidate (not if it was blocked)
+                        }
                     }
                 }
                 if (opts->p25_trunk == 0) {
@@ -1236,7 +1240,9 @@ process_MAC_VPDU(dsd_opts* opts, dsd_state* state, int type, unsigned long long 
                 if (opts->p25_trunk == 1 && (strcmp(mode, "DE") != 0) && (strcmp(mode, "B") != 0)) {
                     if (state->p25_cc_freq != 0 && opts->p25_is_tuned == 0 && tunable_freq != 0) {
                         p25p2_mac_handle(&mac_res, opts, state, tunable_chan, /*svc_bits*/ 0, tunable_group, /*src*/ 0);
-                        j = 8; //break loop after first tune
+                        if (opts->p25_is_tuned) {
+                            j = 8; //break loop after first tune (not if it was blocked)
+                        }
                     }
                 }
                 if (opts->p25_trunk == 0) {

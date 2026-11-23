@@ -253,6 +253,22 @@ static void apply_receive_options() {
             auto_ppm, fll, ted, auto_gain, both_slots, p25_only ? 1 : 0);
 }
 
+// Repeat-visit cooldown (Pocket25 LSM patch): after a call ends, ignore new
+// announcements of the same talkgroup on the same channel for this long (ms).
+// 0 = off (original behavior).
+static std::atomic<int> g_revisit_cooldown_ms{0};
+extern "C" int dsd_flutter_revisit_cooldown_ms(void) { return g_revisit_cooldown_ms.load(); }
+
+// Priority talkgroups (Pocket25 LSM patch): a call on one of these interrupts
+// a call on any other talkgroup (see p25_sm_priority_preempt in DSD-Neo).
+static std::set<int> g_priority_talkgroups;
+static std::mutex g_priority_mutex;
+
+extern "C" int dsd_flutter_is_priority_tg(int tg) {
+    if (tg <= 0) return 0;
+    std::lock_guard<std::mutex> lock(g_priority_mutex);
+    return g_priority_talkgroups.count(tg) ? 1 : 0;
+}
 
 // Retune freeze - temporarily block auto-retunes during system switch
 static std::atomic<bool> g_retune_freeze{false};
@@ -2490,11 +2506,55 @@ Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetReceiveOptions(
          autoPpm, fll, ted, autoGain, bothSlots);
 }
 
+/** Repeat-visit cooldown in ms (0 = off). Takes effect immediately. */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetRevisitCooldown(
+    JNIEnv* env, jobject thiz, jint ms) {
+    g_revisit_cooldown_ms.store(ms < 0 ? 0 : (ms > 5000 ? 5000 : (int)ms));
+}
+
 /** Arm P25-only frame sync for the next engine start (cleared on stop). */
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetP25Only(
     JNIEnv* env, jobject thiz, jboolean enabled) {
     g_p25_only.store(enabled);
+}
+
+/**
+ * Set priority talkgroups (Pocket25 LSM patch). Takes effect immediately.
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetPriorityTalkgroups(
+    JNIEnv* env,
+    jobject thiz,
+    jintArray talkgroups) {
+    std::lock_guard<std::mutex> lock(g_priority_mutex);
+    g_priority_talkgroups.clear();
+    if (talkgroups != nullptr) {
+        jsize len = env->GetArrayLength(talkgroups);
+        jint* tgs = env->GetIntArrayElements(talkgroups, nullptr);
+        for (jsize i = 0; i < len; i++) {
+            if (tgs[i] > 0) g_priority_talkgroups.insert(tgs[i]);
+        }
+        env->ReleaseIntArrayElements(talkgroups, tgs, JNI_ABORT);
+    }
+    LOGI("Priority talkgroups: %zu", g_priority_talkgroups.size());
+}
+
+/**
+ * Whether trunk following may tune to calls flagged encrypted (DSD-Neo
+ * opts->trunk_tune_enc_calls; DSD-Neo default 1). With 0, encrypted grants are
+ * skipped and calls found encrypted mid-stream are released (DSD-Neo enc lockout).
+ */
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_dsd_1flutter_DsdFlutterPlugin_nativeSetTuneEncryptedCalls(
+    JNIEnv* env,
+    jobject thiz,
+    jboolean enabled) {
+    if (g_opts) {
+        g_opts->trunk_tune_enc_calls = enabled ? 1 : 0;
+        LOGI("Trunk tune encrypted calls: %d", g_opts->trunk_tune_enc_calls);
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL
