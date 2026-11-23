@@ -12,6 +12,8 @@ class ScannerScreen extends StatelessWidget {
   final Future<void> Function()? onStopScan;
   /// Restart the last system scan (site).
   final Future<void> Function()? onResumeScan;
+  /// Stop everything and close the app.
+  final Future<void> Function()? onExit;
 
   const ScannerScreen({
     super.key,
@@ -22,7 +24,25 @@ class ScannerScreen extends StatelessWidget {
     this.onToggleMute,
     this.onStopScan,
     this.onResumeScan,
+    this.onExit,
   });
+
+  Future<void> _confirmExit(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Exit Pocket25?'),
+        content: Text(isRunning
+            ? 'This stops scanning, releases the radio and closes the app.'
+            : 'This closes the app.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('EXIT')),
+        ],
+      ),
+    );
+    if (ok == true) await onExit?.call();
+  }
   
   /// Get color for protocol badge
   Color _getProtocolColor(String protocol) {
@@ -193,6 +213,12 @@ class ScannerScreen extends StatelessWidget {
                         ),
                       ),
                     ),
+                  if (onExit != null)
+                    IconButton(
+                      tooltip: 'Exit Pocket25',
+                      onPressed: () => _confirmExit(context),
+                      icon: Icon(Icons.power_settings_new, color: Colors.grey[400], size: _iconSize(context, 22)),
+                    ),
                 ],
               ),
               
@@ -306,12 +332,21 @@ class ScannerScreen extends StatelessWidget {
                         ),
                         if (scanningService.isP25 && scanningService.tsbkCount > 0) ...[
                           SizedBox(width: _spacing(context, 12)),
-                          _buildCompactInfoRow(
-                            Icons.swap_vert,
-                            'BER: ${scanningService.ber.toStringAsFixed(1)}%',
-                            Colors.teal,
-                            context,
-                          ),
+                          // Decode quality over the last ~10 s (falls back to the session
+                          // average until there is enough recent data)
+                          Builder(builder: (context) {
+                            final recent = scanningService.recentBer;
+                            final ber = recent ?? scanningService.ber;
+                            final color = ber < 2 ? Colors.green : (ber < 10 ? Colors.orange : Colors.red);
+                            return _buildCompactInfoRow(
+                              Icons.swap_vert,
+                              recent != null
+                                  ? 'BER 10s: ${ber.toStringAsFixed(1)}%'
+                                  : 'BER: ${ber.toStringAsFixed(1)}%',
+                              color,
+                              context,
+                            );
+                          }),
                         ],
                       ],
                     ),

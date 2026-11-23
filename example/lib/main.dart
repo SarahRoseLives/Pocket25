@@ -100,6 +100,7 @@ class _MainScreenState extends State<MainScreen> {
     _listenToSiteEvents();
     _startCallTimeoutTimer();
     _initializeFilters();
+    _initAutoStart();
     // Repeat-visit cooldown applies immediately when toggled in SDR Settings
     _settingsService.addListener(() {
       _dsdFlutterPlugin.setRevisitCooldown(_settingsService.revisitCooldownMs).catchError((_) {});
@@ -462,11 +463,20 @@ class _MainScreenState extends State<MainScreen> {
           _currentCall = callEvent;
           
           // Add to recent calls (avoid duplicates for same TG within short time)
+          // Same talker = same TG within 5 s and the same radio ID, or one side
+          // without an ID yet (Pocket25 LSM patch: a different radio ID is a new
+          // talker and gets its own row; a late-arriving ID fills in the row).
           final existingIdx = _recentCalls.indexWhere(
-            (c) => c.talkgroup == callEvent.talkgroup && 
-                   DateTime.now().difference(c.timestamp).inSeconds < 5
+            (c) => c.talkgroup == callEvent.talkgroup &&
+                   DateTime.now().difference(c.timestamp).inSeconds < 5 &&
+                   (c.sourceId == callEvent.sourceId || c.sourceId == 0 || callEvent.sourceId == 0)
           );
-          if (existingIdx < 0) {
+          if (existingIdx >= 0) {
+            final existing = _recentCalls[existingIdx];
+            if (existing.sourceId == 0 && callEvent.sourceId > 0) {
+              _recentCalls[existingIdx] = callEvent;
+            }
+          } else {
             _recentCalls.insert(0, callEvent);
             // Keep only last 50 calls
             if (_recentCalls.length > 50) {
@@ -509,6 +519,35 @@ class _MainScreenState extends State<MainScreen> {
 
   void _updateStatus(String status) {
     // Status updates can be logged or displayed elsewhere if needed
+  }
+
+  // ---- Auto-start on dongle attach (Pocket25 LSM patch) ---------------------
+  static const MethodChannel _appChannel = MethodChannel('pocket25/files');
+
+  Future<void> _initAutoStart() async {
+    await _scanningService.loadLastSite();
+    _appChannel.setMethodCallHandler((call) async {
+      if (call.method == 'usbAttached') {
+        await _maybeAutoStart();
+      }
+      return null;
+    });
+    await _maybeAutoStart();
+  }
+
+  /// If the app was opened (or brought forward) by plugging in the dongle and
+  /// the setting is on, resume the last site after a short settle delay.
+  Future<void> _maybeAutoStart() async {
+    bool attached = false;
+    try {
+      attached = await _appChannel.invokeMethod<bool>('consumeUsbAttach') ?? false;
+    } catch (_) {}
+    if (!attached || !_settingsService.autoStartOnAttach) return;
+    await Future.delayed(const Duration(seconds: 2)); // let USB enumerate
+    if (!mounted || _isRunning || _scanningService.isSystemScanActive) return;
+    if (!_scanningService.canResumeLastSite) return;
+    debugPrint('Auto-start: resuming ${_scanningService.lastSiteName}');
+    await _scanningService.resumeLastSite();
   }
 
   // ---- Radio-not-responding detection (Pocket25 LSM patch) -----------------
@@ -584,6 +623,7 @@ class _MainScreenState extends State<MainScreen> {
     lines.add('[cfg] Talkgroup filter: $_filterDesc');
     lines.add('[cfg] Priority talkgroups: $_priorityDesc');
     lines.add('[cfg] Repeat-visit cooldown: ${_settingsService.revisitCooldown ? 'ON (1.5 s)' : 'off'}'
+        ' | auto-start on dongle attach: ${_settingsService.autoStartOnAttach ? 'ON' : 'off'}'
         ' | restart radio after 3 min silence: ${_settingsService.noSignalRestart ? 'ON' : 'off'}');
     lines.add('[cfg] Receive: auto PPM=${_settingsService.rxAutoPpm ? 'ON' : 'off'}'
         ' | auto gain=${_settingsService.rxAutoGain ? 'ON' : 'off'}'
@@ -694,6 +734,21 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  /// Exit button (Pocket25 LSM patch): stop whatever is running so the
+  /// decoder shuts down and releases the dongle, then close the app.
+  Future<void> _exitApp() async {
+    try {
+      if (_scanningService.isSystemScanActive || _isRunning) {
+        await _stopAnyScan();
+      }
+    } catch (_) {}
+    try {
+      await _appChannel.invokeMethod('exitApp');
+    } catch (_) {
+      await SystemNavigator.pop();
+    }
+  }
+
   /// Stop everything from the Scanner screen. A system scan must be stopped
   /// through ScanningService so its lock-check timer doesn't restart it.
   Future<void> _stopAnyScan() async {
@@ -715,6 +770,7 @@ class _MainScreenState extends State<MainScreen> {
           onToggleMute: _toggleMute,
           onStopScan: _stopAnyScan,
           onResumeScan: _scanningService.resumeLastSite,
+          onExit: _exitApp,
         );
       case 1:
         return LogScreen(

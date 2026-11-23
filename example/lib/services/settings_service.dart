@@ -29,6 +29,7 @@ class SettingsService extends ChangeNotifier {
   bool _rxBothSlots = false; // play both TDMA slots (P25 Phase 2 / DMR)
   bool _p25OnlySync = true;  // system scans listen for P25 sync only
   bool _revisitCooldown = false;   // skip re-joining a call that just ended (~1.5 s)
+  bool _autoStartOnAttach = false; // resume the last site when the dongle is plugged in
   bool _noSignalRestart = false;   // restart the radio once after 3 min with no control channel
   
   // Native USB state (RTL-SDR)
@@ -67,6 +68,7 @@ class SettingsService extends ChangeNotifier {
     _rxBothSlots = prefs.getBool('rx_both_slots') ?? _rxBothSlots;
     _p25OnlySync = prefs.getBool('rx_p25_only_sync') ?? _p25OnlySync;
     _revisitCooldown = prefs.getBool('trunk_revisit_cooldown') ?? _revisitCooldown;
+    _autoStartOnAttach = prefs.getBool('auto_start_on_attach') ?? _autoStartOnAttach;
     _noSignalRestart = prefs.getBool('no_signal_restart') ?? _noSignalRestart;
     _hackrfLnaGain = prefs.getInt('sdr_hackrf_lna_gain') ?? _hackrfLnaGain;
     _hackrfVgaGain = prefs.getInt('sdr_hackrf_vga_gain') ?? _hackrfVgaGain;
@@ -95,6 +97,7 @@ class SettingsService extends ChangeNotifier {
     await prefs.setBool('rx_both_slots', _rxBothSlots);
     await prefs.setBool('rx_p25_only_sync', _p25OnlySync);
     await prefs.setBool('trunk_revisit_cooldown', _revisitCooldown);
+    await prefs.setBool('auto_start_on_attach', _autoStartOnAttach);
     await prefs.setBool('no_signal_restart', _noSignalRestart);
     await prefs.setInt('sdr_hackrf_lna_gain', _hackrfLnaGain);
     await prefs.setInt('sdr_hackrf_vga_gain', _hackrfVgaGain);
@@ -124,6 +127,7 @@ class SettingsService extends ChangeNotifier {
   bool get revisitCooldown => _revisitCooldown;
   /// Cooldown sent to the decoder, in ms (0 = off).
   int get revisitCooldownMs => _revisitCooldown ? 1500 : 0;
+  bool get autoStartOnAttach => _autoStartOnAttach;
   bool get noSignalRestart => _noSignalRestart;
   int get nativeUsbFd => _nativeUsbFd;
   String get nativeUsbPath => _nativeUsbPath;
@@ -208,6 +212,12 @@ class SettingsService extends ChangeNotifier {
 
   void updateRevisitCooldown(bool value) {
     _revisitCooldown = value;
+    _saveSettings();
+    notifyListeners();
+  }
+
+  void updateAutoStartOnAttach(bool value) {
+    _autoStartOnAttach = value;
     _saveSettings();
     notifyListeners();
   }

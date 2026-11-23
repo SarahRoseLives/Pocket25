@@ -353,6 +353,15 @@ class _SdrSettingsScreenState extends State<SdrSettingsScreen> {
                       },
                     ),
                     SwitchListTile(
+                      title: const Text('Auto-start when the dongle is plugged in'),
+                      subtitle: const Text('Resume the last site when the RTL-SDR is attached'),
+                      value: widget.settings.autoStartOnAttach,
+                      onChanged: (value) {
+                        setState(() {});
+                        widget.settings.updateAutoStartOnAttach(value);
+                      },
+                    ),
+                    SwitchListTile(
                       title: const Text('Restart the radio if nothing is heard for 3 min'),
                       subtitle: const Text('Once per outage, like unplugging and replugging the dongle. The "no signal" warning shows either way.'),
                       value: widget.settings.noSignalRestart,

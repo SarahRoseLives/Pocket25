@@ -11,6 +11,7 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.util.Log
 import android.content.ContentValues
 import android.provider.MediaStore
@@ -80,7 +81,24 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // Auto-start on dongle attach (Pocket25 LSM patch)
+    private var usbAttachPending = false
     private var filesChannel: MethodChannel? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            usbAttachPending = true
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            usbAttachPending = true
+            filesChannel?.invokeMethod("usbAttached", null)
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -90,6 +108,19 @@ class MainActivity : FlutterActivity() {
         filesChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILES_CHANNEL)
         filesChannel!!.setMethodCallHandler { call, result ->
             when (call.method) {
+                // Auto-start (Pocket25 LSM patch): true once if the app was opened or
+                // brought forward because an RTL-SDR was plugged in.
+                "consumeUsbAttach" -> {
+                    val pending = usbAttachPending
+                    usbAttachPending = false
+                    result.success(pending)
+                }
+                // Exit button (Pocket25 LSM patch): the scan is already stopped on the
+                // Dart side; close the activity and drop it from Recents.
+                "exitApp" -> {
+                    result.success(true)
+                    finishAndRemoveTask()
+                }
                 "saveTextToDownloads" -> {
                     val fileName = call.argument<String>("fileName") ?: "pocket25.txt"
                     val text = call.argument<String>("text") ?: ""

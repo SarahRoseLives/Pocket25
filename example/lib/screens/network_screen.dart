@@ -542,10 +542,63 @@ class _GroupAttachmentsTabState extends State<_GroupAttachmentsTab> {
 // Affiliations Tab
 // ============================================================================
 
-class _AffiliationsTab extends StatelessWidget {
+class _AffiliationsTab extends StatefulWidget {
   final ScanningService? scanningService;
   
   const _AffiliationsTab({this.scanningService});
+
+  @override
+  State<_AffiliationsTab> createState() => _AffiliationsTabState();
+}
+
+class _AffiliationsTabState extends State<_AffiliationsTab> {
+  final DatabaseService _db = DatabaseService();
+  final Map<int, String> _talkgroupNames = {};
+
+  ScanningService? get scanningService => widget.scanningService;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTalkgroupNames();
+  }
+
+  Future<void> _loadTalkgroupNames() async {
+    try {
+      final systemId = scanningService?.currentSystemId;
+      if (systemId == null) return;
+      final talkgroups = await _db.getTalkgroups(systemId);
+      if (!mounted) return;
+      setState(() {
+        for (var tg in talkgroups) {
+          final tgDecimal = tg['tg_decimal'] as int?;
+          final tgName = tg['tg_name'] as String?;
+          final tgTag = tg['tg_tag'] as String?;
+          if (tgDecimal != null && (tgName != null || tgTag != null)) {
+            _talkgroupNames[tgDecimal] = tgTag ?? tgName!;
+          }
+        }
+      });
+    } catch (_) {}
+  }
+
+  /// Last talkgroup each radio joined or was heard on, from Group Attachments
+  /// (registration messages themselves carry no talkgroup).
+  Map<int, int> _lastTalkgroupByRid() {
+    final best = <int, int>{};
+    final bestTs = <int, int>{};
+    for (final ga in scanningService!.groupAttachments) {
+      final rid = ga['rid'] as int?;
+      final tg = ga['tg'] as int?;
+      final ts = (ga['lastSeen'] as int?) ?? 0;
+      if (rid == null || tg == null || tg == 0) continue;
+      if (!bestTs.containsKey(rid) || ts > bestTs[rid]!) {
+        bestTs[rid] = ts;
+        best[rid] = tg;
+      }
+    }
+    return best;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -573,6 +626,8 @@ class _AffiliationsTab extends StatelessWidget {
             ),
           );
         }
+
+        final lastTg = _lastTalkgroupByRid();
 
         // Sort by last seen (most recent first)
         final sortedAffiliations = List<Map<String, dynamic>>.from(affiliations);
@@ -613,9 +668,11 @@ class _AffiliationsTab extends StatelessWidget {
                   ),
                 ),
                 subtitle: Text(
-                  'Last seen: ${_formatAge(ageSeconds)} ago',
+                  'Last seen: ${_formatAge(ageSeconds)} ago\n'
+                  'Talkgroup: ${lastTg[rid] == null ? '—' : '${lastTg[rid]}${_talkgroupNames[lastTg[rid]] != null ? ' (${_talkgroupNames[lastTg[rid]]})' : ''}'}',
                   style: TextStyle(color: Colors.grey[400], fontSize: 14),
                 ),
+                isThreeLine: true,
                 trailing: Container(
                   width: 60,
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

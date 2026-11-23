@@ -305,6 +305,7 @@ class ScanningService extends ChangeNotifier {
       
       // Update counters (only meaningful for P25)
       if (isP25) {
+        _recordBerSample(tsbkOk, tsbkErr);
         if (tsbkOk > _tsbkCount) {
           _tsbkCount = tsbkOk;
           _lastTsbkTime = DateTime.now();
@@ -603,6 +604,7 @@ class ScanningService extends ChangeNotifier {
       _lastSiteId = siteId;
       _lastSiteName = siteName;
       _lastSystemId = systemId;
+      _saveLastSite();
 
       // Normal system scan: drop any stale Advanced Scan command so its -i/-m
       // options don't leak into this scan, then apply this site's modulation.
@@ -1136,6 +1138,50 @@ class ScanningService extends ChangeNotifier {
     } catch (_) {
       return null; // if the check itself fails, don't block scanning
     }
+  }
+
+  /// Remember the last site across app restarts (for RESUME / auto-start).
+  Future<void> _saveLastSite() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_lastSiteId != null) await prefs.setInt('last_site_id', _lastSiteId!);
+      if (_lastSiteName != null) await prefs.setString('last_site_name', _lastSiteName!);
+      if (_lastSystemId != null) {
+        await prefs.setInt('last_system_id', _lastSystemId!);
+      } else {
+        await prefs.remove('last_system_id');
+      }
+    } catch (_) {}
+  }
+
+  /// Load the last site saved by a previous run (does not start scanning).
+  Future<void> loadLastSite() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _lastSiteId ??= prefs.getInt('last_site_id');
+      _lastSiteName ??= prefs.getString('last_site_name');
+      _lastSystemId ??= prefs.getInt('last_system_id');
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  /// Scan quality over roughly the last 10 seconds (Pocket25 LSM patch;
+  /// idea from ClayF/Pocket25). Percent of control-channel messages that
+  /// failed error correction. Null when there isn't enough recent data.
+  final List<List<int>> _berSamples = []; // [epoch ms, ok total, err total]
+
+  void _recordBerSample(int ok, int err) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _berSamples.add([now, ok, err]);
+    _berSamples.removeWhere((s) => now - s[0] > 10000);
+  }
+
+  double? get recentBer {
+    if (_berSamples.length < 2) return null;
+    final first = _berSamples.first, last = _berSamples.last;
+    final ok = last[1] - first[1], err = last[2] - first[2];
+    if (ok < 0 || err < 0 || ok + err < 5) return null;
+    return err * 100.0 / (ok + err);
   }
 
   /// Restart the most recent system scan (site) started from Systems.
