@@ -172,6 +172,9 @@ class _ManualConfigurationScreenState extends State<ManualConfigurationScreen> {
         
         widget.onStatusUpdate('Configuring native USB RTL-SDR...');
         
+        // Not an Advanced Scan: clear stale custom args and use automatic modulation
+        await widget.dsdPlugin.setCustomArgs('');
+        await widget.dsdPlugin.setModulation(0);
         final success = await widget.dsdPlugin.connectNativeUsb(
           fd: result['fd'] as int,
           devicePath: result['devicePath'] as String,

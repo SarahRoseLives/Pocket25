@@ -26,7 +26,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE systems (
@@ -44,6 +44,7 @@ class DatabaseService {
             latitude REAL,
             longitude REAL,
             nac TEXT,
+            modulation TEXT DEFAULT 'auto',
             FOREIGN KEY (system_id) REFERENCES systems (system_id) ON DELETE CASCADE
           )
         ''');
@@ -244,8 +245,51 @@ class DatabaseService {
             'sort_order': 0,
           });
         }
+        if (oldVersion < 5) {
+          // Per-site demodulation mode: 'auto', 'c4fm', or 'lsm' (P25 simulcast CQPSK)
+          await db.execute('''
+            ALTER TABLE sites ADD COLUMN modulation TEXT DEFAULT 'auto'
+          ''');
+        }
       },
     );
+  }
+
+  /// Valid per-site modulation values.
+  static const List<String> siteModulations = ['auto', 'c4fm', 'lsm'];
+
+  /// Normalize any user/CSV value to 'auto', 'c4fm' or 'lsm'.
+  static String normalizeModulation(Object? value) {
+    final v = (value ?? '').toString().trim().toLowerCase();
+    if (v == 'lsm' || v == 'cqpsk' || v == 'qpsk' || v == 'simulcast') return 'lsm';
+    if (v == 'c4fm') return 'c4fm';
+    return 'auto';
+  }
+
+  /// Native mode code for a modulation value: 0 = Auto, 1 = C4FM, 2 = LSM.
+  static int modulationCode(Object? value) {
+    switch (normalizeModulation(value)) {
+      case 'c4fm':
+        return 1;
+      case 'lsm':
+        return 2;
+      default:
+        return 0;
+    }
+  }
+
+  Future<String> getSiteModulation(int siteId) async {
+    final db = await database;
+    final rows = await db.query('sites',
+        columns: ['modulation'], where: 'site_id = ?', whereArgs: [siteId], limit: 1);
+    if (rows.isEmpty) return 'auto';
+    return normalizeModulation(rows.first['modulation']);
+  }
+
+  Future<void> setSiteModulation(int siteId, String modulation) async {
+    final db = await database;
+    await db.update('sites', {'modulation': normalizeModulation(modulation)},
+        where: 'site_id = ?', whereArgs: [siteId]);
   }
 
   Future<void> insertSystem(int systemId, String systemName) async {
@@ -259,7 +303,19 @@ class DatabaseService {
 
   Future<void> insertSite(Map<String, dynamic> site) async {
     final db = await database;
-    await db.insert('sites', site, conflictAlgorithm: ConflictAlgorithm.replace);
+    // REPLACE deletes and re-inserts the row, so keep an existing per-site
+    // modulation unless the caller supplies one (e.g. RadioReference re-import).
+    final row = Map<String, dynamic>.from(site);
+    if (!row.containsKey('modulation') && row['site_id'] != null) {
+      final existing = await db.query('sites',
+          columns: ['modulation'], where: 'site_id = ?', whereArgs: [row['site_id']], limit: 1);
+      if (existing.isNotEmpty && existing.first['modulation'] != null) {
+        row['modulation'] = existing.first['modulation'];
+      }
+    } else if (row.containsKey('modulation')) {
+      row['modulation'] = normalizeModulation(row['modulation']);
+    }
+    await db.insert('sites', row, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> insertControlChannel(int siteId, double frequency, int priority) async {

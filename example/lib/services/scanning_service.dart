@@ -99,6 +99,8 @@ class ScanningService extends ChangeNotifier {
   int? _currentSiteId;
   int? _previousSiteId; // Track previous site for detecting site switches
   String? _currentSiteName;
+  String _currentModulation = 'auto';
+  String get currentModulation => _currentModulation;
   String? _currentChannelName; // For Quick Scan or Conventional channel name
   int? _currentSystemId;
   double? _currentFrequency;
@@ -534,6 +536,17 @@ class ScanningService extends ChangeNotifier {
         _currentSystemId = await _db.getSystemIdForSite(siteId);
       }
       
+
+      // Normal system scan: drop any stale Advanced Scan command so its -i/-m
+      // options don't leak into this scan, then apply this site's modulation.
+      await _dsdPlugin.setCustomArgs('');
+      final siteModulation = await _db.getSiteModulation(siteId);
+      _currentModulation = siteModulation;
+      await _dsdPlugin.setModulation(DatabaseService.modulationCode(siteModulation));
+      if (kDebugMode) {
+        print('Site $siteName modulation: $siteModulation');
+      }
+
       // Load control channels for this site first (needed immediately)
       _controlChannels = await _db.getControlChannels(siteId);
       
@@ -574,6 +587,23 @@ class ScanningService extends ChangeNotifier {
       if (kDebugMode) {
         print('Error starting scan: $e');
       }
+    }
+  }
+
+  /// Before each system-scan engine start: receive options, plus P25-only
+  /// sync if enabled (the native side clears P25-only when the engine stops).
+  Future<void> _armReceive() async {
+    try {
+      await _dsdPlugin.setReceiveOptions(
+        autoPpm: _settingsService.rxAutoPpm,
+        fll: _settingsService.rxFll,
+        ted: _settingsService.rxTed,
+        autoGain: _settingsService.rxAutoGain,
+        bothSlots: _settingsService.rxBothSlots,
+      );
+      await _dsdPlugin.setP25Only(_settingsService.p25OnlySync);
+    } catch (e) {
+      if (kDebugMode) print('Receive options not applied: $e');
     }
   }
 
@@ -661,6 +691,7 @@ class ScanningService extends ChangeNotifier {
           }
           
           // Start the engine
+          await _armReceive();
           _onStart();
         } else {
           // Device already open - need to stop engine, let it clean up USB, then restart with new frequency
@@ -719,6 +750,7 @@ class ScanningService extends ChangeNotifier {
           await _dsdPlugin.setTrunkFollowing(true);
           
           // Start engine with new configuration
+          await _armReceive();
           _onStart();
           
           // Mark that we need to unfreeze when first sync arrives
@@ -774,6 +806,7 @@ class ScanningService extends ChangeNotifier {
           await _dsdPlugin.setTrunkFollowing(true);
           
           // Start the DSD engine
+          await _armReceive();
           _onStart();
         } else {
           // Device already open - retune to new frequency
@@ -808,7 +841,7 @@ class ScanningService extends ChangeNotifier {
             _settingsService.effectiveHost,
             _settingsService.effectivePort,
             _settingsService.frequencyHz,
-            gain: _settingsService.gain,
+            gain: _settingsService.gain * 10, // decoder expects tenths of dB (fix from ClayF/Pocket25)
             ppm: _settingsService.ppm,
             biasTee: _settingsService.biasTee,
           );
@@ -827,6 +860,7 @@ class ScanningService extends ChangeNotifier {
           _rtlTcpReconnectTime = DateTime.now();
           
           // Start DSD
+          await _armReceive();
           _onStart();
           
           // Wait for rtl_tcp connection to be established

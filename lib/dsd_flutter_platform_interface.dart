@@ -213,6 +213,19 @@ abstract class DsdFlutterPlatform extends PlatformInterface {
   Future<void> setCustomArgs(String args) {
     throw UnimplementedError('setCustomArgs() has not been implemented.');
   }
+
+  Future<void> setModulation(int mode) {
+    throw UnimplementedError('setModulation() has not been implemented.');
+  }
+
+  Future<void> setReceiveOptions({bool autoPpm = false, bool fll = false, bool ted = false,
+      bool autoGain = false, bool bothSlots = false}) {
+    throw UnimplementedError('setReceiveOptions() has not been implemented.');
+  }
+
+  Future<void> setP25Only(bool enabled) {
+    throw UnimplementedError('setP25Only() has not been implemented.');
+  }
   
   /// Freeze/unfreeze auto-retune during system switching
   Future<void> setRetuneFrozen(bool frozen) {

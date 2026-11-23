@@ -331,6 +331,7 @@ class DsdFlutterPlugin :
     private external fun nativeSetRtlSdrGain(gain: Int): Boolean
     
     // HackRF native methods
+    private external fun nativeSetModulation(mode: Int)
     private external fun nativeStartHackRfMode(frequency: Long, sampleRate: Int): Boolean
     private external fun nativeGetHackRfPipeFd(): Int
     private external fun nativeFeedHackRfSamples(samples: ByteArray): Boolean
@@ -349,6 +350,8 @@ class DsdFlutterPlugin :
     private external fun nativeResetP25State()
     private external fun nativeSetBiasTee(enabled: Boolean): Boolean
     private external fun nativeSetTrunkFollowing(enabled: Boolean)
+    private external fun nativeSetReceiveOptions(autoPpm: Boolean, fll: Boolean, ted: Boolean, autoGain: Boolean, bothSlots: Boolean)
+    private external fun nativeSetP25Only(enabled: Boolean)
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         instance = this
@@ -636,6 +639,11 @@ class DsdFlutterPlugin :
             "getFilterMode" -> {
                 result.success(nativeGetFilterMode())
             }
+            "setModulation" -> {
+                val mode = call.argument<Int>("mode") ?: 0
+                nativeSetModulation(mode)
+                result.success(null)
+            }
             "setCustomArgs" -> {
                 val args = call.argument<String>("args") ?: ""
                 nativeSetCustomArgs(args)
@@ -659,6 +667,19 @@ class DsdFlutterPlugin :
                 val enabled = call.argument<Boolean>("enabled") ?: false
                 val success = nativeSetBiasTee(enabled)
                 result.success(success)
+            }
+            "setReceiveOptions" -> {
+                nativeSetReceiveOptions(
+                    call.argument<Boolean>("autoPpm") ?: false,
+                    call.argument<Boolean>("fll") ?: false,
+                    call.argument<Boolean>("ted") ?: false,
+                    call.argument<Boolean>("autoGain") ?: false,
+                    call.argument<Boolean>("bothSlots") ?: false)
+                result.success(null)
+            }
+            "setP25Only" -> {
+                nativeSetP25Only(call.argument<Boolean>("enabled") ?: false)
+                result.success(null)
             }
             "setTrunkFollowing" -> {
                 val enabled = call.argument<Boolean>("enabled") ?: true

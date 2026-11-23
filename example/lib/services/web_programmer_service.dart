@@ -330,6 +330,7 @@ class WebProgrammerService {
             'nac': site['nac'],
             'latitude': site['latitude'],
             'longitude': site['longitude'],
+            if (site.containsKey('modulation')) 'modulation': site['modulation'],
           });
           
           // Add control channels for this site
@@ -448,6 +449,7 @@ class WebProgrammerService {
         'nac': data['nac'],
         'latitude': data['latitude'],
         'longitude': data['longitude'],
+        if (data.containsKey('modulation')) 'modulation': data['modulation'],
       });
       
       // Add control channels
@@ -493,6 +495,7 @@ class WebProgrammerService {
         'nac': data['nac'],
         'latitude': data['latitude'],
         'longitude': data['longitude'],
+        if (data.containsKey('modulation')) 'modulation': data['modulation'],
       });
       
       // Update control channels
@@ -625,7 +628,7 @@ class WebProgrammerService {
       final StringBuffer csvBuffer = StringBuffer();
       
       // CSV Headers
-      csvBuffer.writeln('SystemID,SystemName,SiteID,SiteNumber,SiteName,Latitude,Longitude,NAC,ControlFrequency,ControlPriority,TalkgroupID,TalkgroupName,TalkgroupCategory,TalkgroupTag');
+      csvBuffer.writeln('SystemID,SystemName,SiteID,SiteNumber,SiteName,Latitude,Longitude,NAC,ControlFrequency,ControlPriority,TalkgroupID,TalkgroupName,TalkgroupCategory,TalkgroupTag,Modulation');
       
       for (final system in systems) {
         final systemId = system['system_id'] as int;
@@ -639,7 +642,7 @@ class WebProgrammerService {
         
         if (sites.isEmpty && talkgroups.isEmpty) {
           // System with no sites or talkgroups
-          csvBuffer.writeln('$systemId,"$systemName",,,,,,,,,,,');
+          csvBuffer.writeln('$systemId,"$systemName",,,,,,,,,,,,,');
         } else {
           // Export sites with their control channels
           for (final site in sites) {
@@ -649,18 +652,19 @@ class WebProgrammerService {
             final latitude = site['latitude'] ?? '';
             final longitude = site['longitude'] ?? '';
             final nac = site['nac'] ?? '';
+            final modulation = DatabaseService.normalizeModulation(site['modulation']);
             
             // Get control channels for this site
             final controlChannels = await _dbService.getControlChannels(siteId);
             
             if (controlChannels.isEmpty) {
               // Site with no control channels
-              csvBuffer.writeln('$systemId,"$systemName",$siteId,$siteNumber,"$siteName",$latitude,$longitude,"$nac",,,,,,');
+              csvBuffer.writeln('$systemId,"$systemName",$siteId,$siteNumber,"$siteName",$latitude,$longitude,"$nac",,,,,,,$modulation');
             } else {
               for (final channel in controlChannels) {
                 final frequency = channel['frequency'];
                 final priority = channel['priority'] ?? 0;
-                csvBuffer.writeln('$systemId,"$systemName",$siteId,$siteNumber,"$siteName",$latitude,$longitude,"$nac",$frequency,$priority,,,,');
+                csvBuffer.writeln('$systemId,"$systemName",$siteId,$siteNumber,"$siteName",$latitude,$longitude,"$nac",$frequency,$priority,,,,,$modulation');
               }
             }
           }
@@ -671,7 +675,7 @@ class WebProgrammerService {
             final tgName = _escapeCSV(tg['tg_name'] as String);
             final tgCategory = _escapeCSV(tg['tg_category'] as String? ?? '');
             final tgTag = _escapeCSV(tg['tg_tag'] as String? ?? '');
-            csvBuffer.writeln('$systemId,"$systemName",,,,,,,$tgDecimal,"$tgName","$tgCategory","$tgTag"');
+            csvBuffer.writeln('$systemId,"$systemName",,,,,,,,,$tgDecimal,"$tgName","$tgCategory","$tgTag",');
           }
         }
       }
@@ -741,6 +745,8 @@ class WebProgrammerService {
             final latitude = double.tryParse(fields[5]);
             final longitude = double.tryParse(fields[6]);
             final nac = fields[7];
+            // Optional 15th column (Pocket25 LSM patch); older 14-column files keep existing/auto
+            final modulation = fields.length > 14 && fields[14].trim().isNotEmpty ? fields[14] : null;
             
             if (siteId != null && siteName.isNotEmpty && !processedSites.containsKey(siteId)) {
               await _dbService.insertSite({
@@ -751,6 +757,7 @@ class WebProgrammerService {
                 'latitude': latitude,
                 'longitude': longitude,
                 'nac': nac.isNotEmpty ? nac : null,
+                if (modulation != null) 'modulation': modulation,
               });
               processedSites[siteId] = true;
               sitesAdded++;
@@ -1591,7 +1598,7 @@ class WebProgrammerService {
                     <div class="item">
                         <div>
                             <strong style="font-size: 1.1em;">${site.site_name}</strong><br>
-                            <small style="color: #888;">${site.nac ? 'NAC: ' + site.nac + ' | ' : ''}${channels.length} channel(s)</small><br>
+                            <small style="color: #888;">${site.nac ? 'NAC: ' + site.nac + ' | ' : ''}${channels.length} channel(s) | Modulation: ${({lsm: 'LSM (simulcast)', c4fm: 'C4FM'})[site.modulation] || 'Auto'}</small><br>
                             ${channels.map(ch => `<span class="frequency-tag">${ch.frequency} MHz</span>`).join('')}
                         </div>
                         <div>
@@ -1683,6 +1690,17 @@ class WebProgrammerService {
                     </label>
                     
                     <label style="display: block; margin-bottom: 10px; color: #e0e0e0;">
+                        Modulation:
+                        <select id="edit_modulation"
+                                style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a3e; border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
+                            <option value="auto" ${(site.modulation || 'auto') === 'auto' ? 'selected' : ''}>Auto (default)</option>
+                            <option value="c4fm" ${site.modulation === 'c4fm' ? 'selected' : ''}>C4FM (standard P25 Phase 1)</option>
+                            <option value="lsm" ${site.modulation === 'lsm' ? 'selected' : ''}>LSM / CQPSK (P25 simulcast)</option>
+                        </select>
+                        <small style="color: #888;">Choose LSM for simulcast sites that won't lock or show constant CRC errors.</small>
+                    </label>
+                    
+                    <label style="display: block; margin-bottom: 10px; color: #e0e0e0;">
                         Latitude:
                         <input type="number" step="any" id="edit_latitude" value="${site.latitude || ''}" 
                                style="width: 100%; padding: 8px; margin-top: 5px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
@@ -1727,7 +1745,7 @@ class WebProgrammerService {
             const row = document.createElement('div');
             row.style.cssText = 'display: flex; gap: 10px; margin-bottom: 10px; align-items: center;';
             row.innerHTML = `
-                <input type="number" step="0.001" placeholder="Frequency (MHz)" value="${frequency}" 
+                <input type="number" step="any" placeholder="Frequency (MHz)" value="${frequency}" 
                        class="cc_freq" data-index="${rowIndex}"
                        style="flex: 1; padding: 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; color: #e0e0e0;">
                 <input type="number" placeholder="Priority" value="${priority}" 
@@ -1747,6 +1765,8 @@ class WebProgrammerService {
             const siteName = document.getElementById('edit_site_name').value.trim();
             const siteNumber = document.getElementById('edit_site_number').value.trim();
             const nac = document.getElementById('edit_nac').value.trim();
+            const modulationEl = document.getElementById('edit_modulation');
+            const modulation = modulationEl ? modulationEl.value : 'auto';
             const latitude = document.getElementById('edit_latitude').value.trim();
             const longitude = document.getElementById('edit_longitude').value.trim();
             
@@ -1783,6 +1803,7 @@ class WebProgrammerService {
                         nac: nac || null,
                         latitude: latitude ? parseFloat(latitude) : null,
                         longitude: longitude ? parseFloat(longitude) : null,
+                        modulation: modulation,
                         control_channels: controlChannels
                     })
                 });

@@ -322,6 +322,24 @@ class MethodChannelDsdFlutter extends DsdFlutterPlatform {
       'args': args,
     });
   }
+  @override
+  Future<void> setModulation(int mode) async {
+    await methodChannel.invokeMethod('setModulation', {'mode': mode});
+  }
+
+  @override
+  Future<void> setReceiveOptions({bool autoPpm = false, bool fll = false, bool ted = false,
+      bool autoGain = false, bool bothSlots = false}) async {
+    await methodChannel.invokeMethod('setReceiveOptions', {
+      'autoPpm': autoPpm, 'fll': fll, 'ted': ted, 'autoGain': autoGain, 'bothSlots': bothSlots,
+    });
+  }
+
+  @override
+  Future<void> setP25Only(bool enabled) async {
+    await methodChannel.invokeMethod('setP25Only', {'enabled': enabled});
+  }
+
   
   @override
   Future<void> setRetuneFrozen(bool frozen) async {

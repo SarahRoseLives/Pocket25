@@ -389,6 +389,17 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _start() async {
+    // Receive options (auto PPM, auto gain, FLL, TED, both TDMA slots) apply at
+    // every engine start, in every mode.
+    try {
+      await _dsdFlutterPlugin.setReceiveOptions(
+        autoPpm: _settingsService.rxAutoPpm,
+        fll: _settingsService.rxFll,
+        ted: _settingsService.rxTed,
+        autoGain: _settingsService.rxAutoGain,
+        bothSlots: _settingsService.rxBothSlots,
+      );
+    } catch (_) {}
     try {
       setState(() {
         _isRunning = true;

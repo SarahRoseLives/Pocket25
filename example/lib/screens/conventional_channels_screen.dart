@@ -188,6 +188,9 @@ class _ConventionalChannelsScreenState extends State<ConventionalChannelsScreen>
       widget.settings.updateFrequency(channel.frequency);
       
       // Disable trunk following for conventional mode
+      // Not an Advanced Scan: clear stale custom args and use automatic modulation
+      await widget.dsdPlugin.setCustomArgs('');
+      await widget.dsdPlugin.setModulation(0);
       await widget.dsdPlugin.setTrunkFollowing(false);
       
       // Freeze retunes to prevent buffered P25 data from causing retunes to old frequencies
@@ -256,7 +259,7 @@ class _ConventionalChannelsScreenState extends State<ConventionalChannelsScreen>
             widget.settings.remoteHost,
             widget.settings.remotePort,
             widget.settings.frequencyHz,
-            gain: widget.settings.gain,
+            gain: widget.settings.gain * 10, // decoder expects tenths of dB (fix from ClayF/Pocket25)
             ppm: widget.settings.ppm,
             biasTee: widget.settings.biasTee,
           );

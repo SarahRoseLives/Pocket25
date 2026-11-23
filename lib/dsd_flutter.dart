@@ -266,6 +266,24 @@ class DsdFlutter {
   Future<void> setCustomArgs(String args) {
     return DsdFlutterPlatform.instance.setCustomArgs(args);
   }
+
+  /// Set the demodulation mode used at the next engine start.
+  /// 0 = Auto, 1 = C4FM, 2 = LSM (CQPSK, P25 Phase 1 simulcast).
+  Future<void> setModulation(int mode) {
+    return DsdFlutterPlatform.instance.setModulation(mode);
+  }
+
+  /// Receive options, applied at the next engine start.
+  Future<void> setReceiveOptions({bool autoPpm = false, bool fll = false, bool ted = false,
+      bool autoGain = false, bool bothSlots = false}) {
+    return DsdFlutterPlatform.instance.setReceiveOptions(
+        autoPpm: autoPpm, fll: fll, ted: ted, autoGain: autoGain, bothSlots: bothSlots);
+  }
+
+  /// P25-only frame sync for the next engine start (cleared when the engine stops).
+  Future<void> setP25Only(bool enabled) {
+    return DsdFlutterPlatform.instance.setP25Only(enabled);
+  }
   
   /// Freeze/unfreeze auto-retune during system switching
   /// 

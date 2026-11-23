@@ -129,6 +129,8 @@ class _AdvancedScanScreenState extends State<AdvancedScanScreen> {
 
     try {
       // Set custom command args - this will be parsed by DSD on start
+      // Per-site modulation doesn't apply here; a -ma/-mc/-mq/-mg token in the command overrides Auto
+      await widget.dsdPlugin.setModulation(0);
       await widget.dsdPlugin.setCustomArgs(command);
       
       // Clear any current system selection (Advanced Scan mode = no system)
